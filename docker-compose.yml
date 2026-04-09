@@ -28,22 +28,6 @@ services:
       - ./postgres/init:/docker-entrypoint-initdb.d
     restart: unless-stopped
 
-  metabase:
-    image: metabase/metabase:latest
-    ports:
-      - "3000:3000"
-    depends_on:
-      - postgres
-    restart: unless-stopped
-
 volumes:
   postgres_data:
   file_storage:
-    # Named volume for uploaded files.
-    # External services (chunker_service, pg_ingester) must mount this same
-    # volume in their own compose files to access files by storage_path.
-    # Example for an external compose:
-    #   volumes:
-    #     file_storage:
-    #       external: true
-    #       name: dialogue-agent_file_storage
