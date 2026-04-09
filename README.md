@@ -50,12 +50,7 @@ ollama pull nomic-embed-text
 - `app/services/` contains async clients for external infrastructure services.
 - `app/api/` exposes health, JSON chat, and SSE streaming endpoints.
 
-## Metabase
-
-Run Metabase from the compose stack and connect it to the same PostgreSQL instance to build dashboards on the `traces` table. Recommended starter charts are latency by `step_name`, tool error rate, average estimated tokens, and per-user orchestration volume.
-
 ## Notes
 
-- No Qdrant integration is included.
 - Retrieval is designed to happen through external tools and PostgreSQL history search only.
 - External adapter paths are placeholders and should be aligned with real downstream contracts.
