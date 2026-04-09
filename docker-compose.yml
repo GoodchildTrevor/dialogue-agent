@@ -9,6 +9,8 @@ services:
       - "8000:8000"
     depends_on:
       - postgres
+    volumes:
+      - file_storage:/app/storage
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
@@ -36,3 +38,12 @@ services:
 
 volumes:
   postgres_data:
+  file_storage:
+    # Named volume for uploaded files.
+    # External services (chunker_service, pg_ingester) must mount this same
+    # volume in their own compose files to access files by storage_path.
+    # Example for an external compose:
+    #   volumes:
+    #     file_storage:
+    #       external: true
+    #       name: dialogue-agent_file_storage
