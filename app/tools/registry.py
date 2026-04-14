@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Iterable
 
+from jsonschema import ValidationError, validate
+
 from app.tools.base import BaseTool, ToolContext, ToolExecutionError
 
 
@@ -32,6 +34,22 @@ class ToolRegistry:
                     "retryable": False,
                 },
             }
+
+        # Validate arguments against the tool's declared schema before invoking
+        schema = tool.spec.args_schema or {"type": "object"}
+        try:
+            validate(instance=arguments, schema=schema)
+        except ValidationError as exc:
+            return {
+                "tool": name,
+                "ok": False,
+                "error": {
+                    "code": "invalid_arguments",
+                    "message": exc.message,
+                    "retryable": False,
+                },
+            }
+
         try:
             result = await tool.invoke(arguments, context)
             return {"tool": name, "ok": True, "result": result}

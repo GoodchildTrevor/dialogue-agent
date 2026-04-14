@@ -12,6 +12,8 @@ class FileViewerTool(ExternalToolAdapter):
                 "path": {"type": "string"},
                 "page": {"type": "integer"},
             },
+            "required": ["file_id"],
+            "additionalProperties": False,
         },
         layer="external_tool_adapter",
     )
