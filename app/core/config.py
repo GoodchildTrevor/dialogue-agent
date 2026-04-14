@@ -18,18 +18,13 @@ class Settings(BaseSettings):
     LLM_BASE_URL: str
     ROUTER_MODEL: str
     REASONING_MODEL: str
-    EMBEDDING_MODEL: str
+
+    MCP_SERVER_URL: str
 
     POSTGRES_URL: str
 
     CHUNKER_SERVICE_URL: str
     PG_INGESTER_URL: str
-
-    DOCUMENT_SEARCHER_URL: str
-    FILE_VIEWER_URL: str
-    WEB_SEARCHER_URL: str
-    IMAGE_GENERATOR_URL: str
-    FILE_CONVERTER_URL: str
 
     MAX_TOOL_RETRIES: int = 3
     HTTP_TIMEOUT_SECONDS: float = 20.0
