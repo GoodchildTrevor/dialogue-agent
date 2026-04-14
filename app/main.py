@@ -15,8 +15,10 @@ from app.graph.nodes import GraphRuntime
 async def lifespan(app: FastAPI):
     settings = get_settings()
     llm = LLMClient(settings)
-    app.state.runtime = GraphRuntime(settings=settings, ollama=llm)
+    runtime = GraphRuntime(settings=settings, ollama=llm)
     await init_db()
+    await runtime.refresh_tool_descriptions()
+    app.state.runtime = runtime
     yield
     await llm.aclose()
 
@@ -24,4 +26,3 @@ async def lifespan(app: FastAPI):
 settings = get_settings()
 app = FastAPI(title=settings.APP_NAME, lifespan=lifespan)
 app.include_router(api_router, prefix=settings.API_V1_PREFIX)
-app.include_router(api_router)
