@@ -19,6 +19,7 @@ class ToolExecutionResult(TypedDict):
 class AssistantState(TypedDict, total=False):
     messages: list[dict[str, str]]
     user_id: str
+    request_id: str
     context: dict[str, Any]
     intermediate_steps: list[dict[str, Any]]
     is_complex_task: bool

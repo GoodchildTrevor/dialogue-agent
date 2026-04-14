@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Any
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import ARRAY, DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -29,12 +29,8 @@ class File(Base):
     user_id: Mapped[str] = mapped_column(String(255), index=True)
     original_name: Mapped[str] = mapped_column(String(512))
     mime_type: Mapped[str] = mapped_column(String(128))
-    # Absolute path inside the container, e.g. /app/storage/{user_id}/{uuid}.pdf
-    # Matches the STORAGE_LOCAL_PATH volume mount. External services (chunker_service,
-    # pg_ingester) must mount the same volume to access the file at this path.
     storage_path: Mapped[str] = mapped_column(Text)
     size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    # pending | chunking | indexed | error
     status: Mapped[str] = mapped_column(String(32), index=True, default="pending")
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
@@ -52,7 +48,6 @@ class Message(Base):
     user_id: Mapped[str] = mapped_column(String(255), index=True)
     role: Mapped[str] = mapped_column(String(32), index=True)
     content: Mapped[str] = mapped_column(Text)
-    # Optional reference to a file that this message is about.
     file_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("files.id", ondelete="SET NULL"), nullable=True, index=True
     )
@@ -68,6 +63,8 @@ class TraceRecord(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[str] = mapped_column(String(255), index=True)
+    # F3 — correlate all trace rows belonging to one user turn
+    request_id: Mapped[str] = mapped_column(String(64), index=True)
     step_name: Mapped[str] = mapped_column(String(128), index=True)
     input_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     output_text: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -76,3 +73,9 @@ class TraceRecord(Base):
     latency_ms: Mapped[int] = mapped_column(Integer, nullable=False)
     estimated_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+    # F8 — queryable top-level analytics columns (no JSONB path queries needed)
+    route_decision: Mapped[str | None] = mapped_column(String(32), index=True, nullable=True)
+    model_used: Mapped[str | None] = mapped_column(String(128), index=True, nullable=True)
+    rejection_reason: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)
+    input_hash: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)
+    tool_names: Mapped[list[str] | None] = mapped_column(ARRAY(String), nullable=True)
