@@ -4,28 +4,20 @@ import asyncio
 import hashlib
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
+from fastmcp import Client as MCPClient
 from langgraph.graph import END, START, StateGraph
 
 from app.core.config import Settings
-from app.core.ollama import OllamaClient
+from app.core.llm_client import LLMClient
 from app.core.tracing import trace
 from app.graph.edges import after_orchestrator, after_router, after_tools
 from app.graph.prompt_fragments import GIBBERISH_HANDLING, INJECTION_DEFENSE, REFUSAL_POLICY
 from app.graph.state import AssistantState, ToolCall
 from app.services.chunker_service import ChunkerServiceClient
 from app.services.pg_ingester import PgIngesterClient
-from app.tools.base import ToolContext
-from app.tools.call_strong_model import CallStrongModelTool
-from app.tools.document_searcher import DocumentSearcherTool
-from app.tools.file_converter import FileConverterTool
-from app.tools.file_viewer import FileViewerTool
-from app.tools.image_generator import ImageGeneratorTool
-from app.tools.registry import ToolRegistry
-from app.tools.search_history import SearchHistoryTool
-from app.tools.web_searcher import WebSearcherTool
 
 # ---------------------------------------------------------------------------
 # System prompts
@@ -123,10 +115,59 @@ Instructions:
 ).strip()
 
 
+# ---------------------------------------------------------------------------
+# MCP tool helpers
+# ---------------------------------------------------------------------------
+
+async def _mcp_list_tools(mcp_url: str) -> list[dict[str, Any]]:
+    """Fetch available tools from the MCP server and normalise to agent schema."""
+    async with MCPClient(mcp_url) as client:
+        tools = await client.list_tools()
+    return [
+        {
+            "name": t.name,
+            "description": t.description or "",
+            "args_schema": t.inputSchema,
+        }
+        for t in tools
+    ]
+
+
+async def _mcp_call_tool(
+    mcp_url: str,
+    name: str,
+    arguments: dict[str, Any],
+) -> dict[str, Any]:
+    """Call a single MCP tool and return a normalised result envelope."""
+    try:
+        async with MCPClient(mcp_url) as client:
+            result = await client.call_tool(name, arguments)
+        # fastmcp returns a list of content items; collapse text content to a dict
+        content = result.content
+        if content and hasattr(content[0], "text"):
+            try:
+                parsed = json.loads(content[0].text)
+                return {"tool": name, "ok": True, "result": parsed}
+            except json.JSONDecodeError:
+                return {"tool": name, "ok": True, "result": {"text": content[0].text}}
+        return {"tool": name, "ok": True, "result": {}}
+    except Exception as exc:
+        return {
+            "tool": name,
+            "ok": False,
+            "error": {"code": "mcp_error", "message": str(exc), "retryable": True},
+        }
+
+
+# ---------------------------------------------------------------------------
+# GraphRuntime
+# ---------------------------------------------------------------------------
+
 @dataclass(slots=True)
 class GraphRuntime:
     settings: Settings
-    ollama: OllamaClient
+    ollama: LLMClient  # named 'ollama' for backward compat with main.py
+    _tool_descriptions: list[dict[str, Any]] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.chunker_service = ChunkerServiceClient(
@@ -137,33 +178,11 @@ class GraphRuntime:
             base_url=self.settings.PG_INGESTER_URL,
             timeout_seconds=self.settings.TOOL_REQUEST_TIMEOUT_SECONDS,
         )
-        self.tool_registry = ToolRegistry(
-            [
-                SearchHistoryTool(settings=self.settings, ollama=self.ollama),
-                CallStrongModelTool(self.invoke_reasoning_model),
-                DocumentSearcherTool(
-                    base_url=self.settings.DOCUMENT_SEARCHER_URL,
-                    timeout_seconds=self.settings.TOOL_REQUEST_TIMEOUT_SECONDS,
-                ),
-                FileViewerTool(
-                    base_url=self.settings.FILE_VIEWER_URL,
-                    timeout_seconds=self.settings.TOOL_REQUEST_TIMEOUT_SECONDS,
-                ),
-                WebSearcherTool(
-                    base_url=self.settings.WEB_SEARCHER_URL,
-                    timeout_seconds=self.settings.TOOL_REQUEST_TIMEOUT_SECONDS,
-                ),
-                ImageGeneratorTool(
-                    base_url=self.settings.IMAGE_GENERATOR_URL,
-                    timeout_seconds=self.settings.TOOL_REQUEST_TIMEOUT_SECONDS,
-                ),
-                FileConverterTool(
-                    base_url=self.settings.FILE_CONVERTER_URL,
-                    timeout_seconds=self.settings.TOOL_REQUEST_TIMEOUT_SECONDS,
-                ),
-            ]
-        )
         self.graph = self._build_graph()
+
+    async def refresh_tool_descriptions(self) -> None:
+        """Fetch tool list from MCP server. Call once at startup (lifespan)."""
+        self._tool_descriptions = await _mcp_list_tools(self.settings.MCP_SERVER_URL)
 
     def build_initial_state(
         self,
@@ -212,7 +231,6 @@ class GraphRuntime:
             parsed = _parse_json_object(content)
             update = _router_fallback(user_message) if parsed is None else parsed
             t.output = update
-            # F8 — derive route_decision from parsed result
             if update.get("is_simple") and update.get("answer"):
                 t.route_decision = "simple"
             elif update.get("needs_reasoning_model") or update.get("is_complex_task"):
@@ -243,9 +261,7 @@ class GraphRuntime:
             input=payload,
         ) as t:
             t.model_used = self.settings.ROUTER_MODEL
-            tool_descriptions = json.dumps(
-                self.tool_registry.describe_for_model(), ensure_ascii=False
-            )
+            tool_descriptions = json.dumps(self._tool_descriptions, ensure_ascii=False)
             system_message = (
                 f"{ORCHESTRATOR_SYSTEM_PROMPT}\n\n"
                 f"Available tools (JSON): {tool_descriptions}\n"
@@ -284,11 +300,17 @@ class GraphRuntime:
 
     async def tool_executor_node(self, state: AssistantState) -> dict[str, Any]:
         tool_calls = state.get("pending_tool_calls", [])
-        tool_context = ToolContext(
-            user_id=state["user_id"],
-            state=state,
-            emit_status=lambda s: self.emit_status(state, s),
-        )
+        mcp_url = self.settings.MCP_SERVER_URL
+        user_id = state["user_id"]
+
+        async def _invoke(call: ToolCall) -> dict[str, Any]:
+            arguments = dict(call.get("arguments", {}))
+            # Inject user_id for tools that need it (e.g. search_history)
+            if "user_id" not in arguments:
+                arguments["user_id"] = user_id
+            await self.emit_status(state, f"Calling tool: {call['tool']}...")
+            return await _mcp_call_tool(mcp_url, call["tool"], arguments)
+
         payload = {"tool_calls": tool_calls}
         async with trace(
             step_name="tool_executor",
@@ -297,15 +319,10 @@ class GraphRuntime:
             input=payload,
         ) as t:
             t.tool_names = [call["tool"] for call in tool_calls]
-            results = await asyncio.gather(
-                *(
-                    self.tool_registry.invoke(call["tool"], call.get("arguments", {}), tool_context)
-                    for call in tool_calls
-                )
-            )
+            results = await asyncio.gather(*(_invoke(call) for call in tool_calls))
             t.output = {"results": results}
 
-        errors = [result for result in results if not result.get("ok")]
+        errors = [r for r in results if not r.get("ok")]
         new_steps = state.get("intermediate_steps", []) + [
             {"tool_calls": tool_calls, "results": results}
         ]
@@ -319,10 +336,7 @@ class GraphRuntime:
             retries = state.get("tool_retry_count", 0) + 1
             update["tool_retry_count"] = retries
             update["last_tool_error"] = errors[0]["error"]
-            if retries >= self.settings.MAX_TOOL_RETRIES:
-                update["next_action"] = "reasoning"
-            else:
-                update["next_action"] = "orchestrator"
+            update["next_action"] = "reasoning" if retries >= self.settings.MAX_TOOL_RETRIES else "orchestrator"
             return update
         update["last_tool_error"] = None
         update["next_action"] = "orchestrator"
@@ -345,11 +359,11 @@ class GraphRuntime:
             input=payload,
         ) as t:
             t.model_used = self.settings.REASONING_MODEL
-            answer = await self.invoke_reasoning_model(task, state)
+            answer = await self._invoke_reasoning_model(task, state)
             t.output = {"answer": answer}
         return {"final_answer": answer, "next_action": "end"}
 
-    async def invoke_reasoning_model(self, task: str, state: dict[str, Any]) -> str:
+    async def _invoke_reasoning_model(self, task: str, state: dict[str, Any]) -> str:
         await self.emit_status(state, "Calling reasoning model...")
         response = await self.ollama.chat(
             model=self.settings.REASONING_MODEL,
@@ -395,6 +409,10 @@ class GraphRuntime:
         graph.add_edge("reasoning", END)
         return graph.compile()
 
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 def _extract_token_estimate(response: dict[str, Any]) -> int | None:
     prompt_tokens = response.get("prompt_eval_count")
