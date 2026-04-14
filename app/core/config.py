@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     API_V1_PREFIX: str = "/api/v1"
     LOG_LEVEL: str = "INFO"
 
-    OLLAMA_BASE_URL: str
+    LLM_BASE_URL: str
     ROUTER_MODEL: str
     REASONING_MODEL: str
     EMBEDDING_MODEL: str
