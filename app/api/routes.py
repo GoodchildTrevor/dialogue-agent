@@ -10,15 +10,17 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.security import APIKeyHeader
 
 from app.api.schemas import ChatRequest, ChatResponse
-from app.core.config import get_settings
+from app.core.config import Settings
 from app.graph.nodes import GraphRuntime
 
 router = APIRouter()
 
 api_key_header = APIKeyHeader(name="X-API-Key")
 
-async def get_api_key(api_key: str = Depends(api_key_header)) -> str:
-    settings = get_settings()
+def get_settings_dep(request: Request) -> Settings:
+    return request.app.state.settings
+
+async def get_api_key(api_key: str = Depends(api_key_header), settings: Settings = Depends(get_settings_dep)) -> str:
     if api_key != settings.API_KEY:
         raise HTTPException(status_code=403, detail="Invalid API key")
     return api_key
