@@ -32,15 +32,27 @@ def _safe_text(value: Any) -> str | None:
 class TraceHandle:
     step_name: str
     user_id: str
+    request_id: str
     input: Any
     output: Any = None
     estimated_tokens: int | None = None
     started_at: float = field(default_factory=time.perf_counter)
+    # F8 — queryable top-level fields
+    route_decision: str | None = None
+    model_used: str | None = None
+    rejection_reason: str | None = None
+    input_hash: str | None = None
+    tool_names: list[str] | None = None
 
 
 class trace(AbstractAsyncContextManager[TraceHandle]):
-    def __init__(self, *, step_name: str, user_id: str, input: Any) -> None:
-        self._handle = TraceHandle(step_name=step_name, user_id=user_id, input=input)
+    def __init__(self, *, step_name: str, user_id: str, request_id: str, input: Any) -> None:
+        self._handle = TraceHandle(
+            step_name=step_name,
+            user_id=user_id,
+            request_id=request_id,
+            input=input,
+        )
 
     async def __aenter__(self) -> TraceHandle:
         return self._handle
@@ -57,14 +69,19 @@ async def _persist_trace(handle: TraceHandle, latency_ms: int) -> None:
         async with async_session_maker() as session:
             record = TraceRecord(
                 user_id=handle.user_id,
+                request_id=handle.request_id,
                 step_name=handle.step_name,
                 input_text=_safe_text(handle.input),
                 output_text=_safe_text(handle.output),
                 input_payload=_safe_payload(handle.input),
                 output_payload=_safe_payload(handle.output),
                 latency_ms=latency_ms,
-                # Ollama can return prompt_eval_count/eval_count in chat metadata; store null when unavailable.
                 estimated_tokens=handle.estimated_tokens,
+                route_decision=handle.route_decision,
+                model_used=handle.model_used,
+                rejection_reason=handle.rejection_reason,
+                input_hash=handle.input_hash,
+                tool_names=handle.tool_names,
             )
             session.add(record)
             await session.commit()

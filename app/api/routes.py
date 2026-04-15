@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from typing import AsyncGenerator
+from uuid import uuid4
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -24,19 +25,26 @@ async def healthz() -> JSONResponse:
 
 @router.post("/chat", response_model=ChatResponse)
 async def chat(payload: ChatRequest, request: Request) -> ChatResponse:
+    request_id = getattr(request.state, "request_id", None) or uuid4().hex
     runtime = get_runtime(request)
-    state = runtime.build_initial_state(user_id=payload.user_id, message=payload.message)
+    state = runtime.build_initial_state(
+        user_id=payload.user_id,
+        message=payload.message,
+        request_id=request_id,
+    )
     result = await runtime.run(state)
     return ChatResponse(answer=result.get("final_answer", ""))
 
 
 @router.post("/stream")
 async def stream(payload: ChatRequest, request: Request) -> StreamingResponse:
+    request_id = getattr(request.state, "request_id", None) or uuid4().hex
     runtime = get_runtime(request)
     queue: asyncio.Queue[str] = asyncio.Queue()
     initial_state = runtime.build_initial_state(
         user_id=payload.user_id,
         message=payload.message,
+        request_id=request_id,
         status_queue=queue,
     )
 

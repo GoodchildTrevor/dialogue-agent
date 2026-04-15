@@ -10,7 +10,7 @@ from fastapi import FastAPI, Request
 
 from app.api.routes import router as api_router
 from app.core.config import get_settings
-from app.core.ollama import OllamaClient
+from app.core.llm_client import LLMClient
 from app.db.session import init_db
 from app.graph.nodes import GraphRuntime
 
@@ -26,11 +26,14 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    settings = get_settings()
     ollama = OllamaClient(settings)
     app.state.runtime = GraphRuntime(settings=settings, ollama=ollama)
     await init_db()
+    await runtime.refresh_tool_descriptions()
+    app.state.runtime = runtime
     yield
-    await ollama.aclose()
+    await llm.aclose()
 
 
 app = FastAPI(title=settings.APP_NAME, lifespan=lifespan)
