@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.db.models import TraceRecord
-from app.db.session import async_session_maker
+from app.db.session import get_session_maker
 
 logger = logging.getLogger(__name__)
 
@@ -61,12 +61,14 @@ class trace(AbstractAsyncContextManager[TraceHandle]):
         latency_ms = int((time.perf_counter() - self._handle.started_at) * 1000)
         if exc is not None:
             self._handle.output = {"error": str(exc)}
-        asyncio.create_task(_persist_trace(self._handle, latency_ms))
+        task = asyncio.create_task(_persist_trace(self._handle, latency_ms))
+        # Ensure exceptions in the background task are observed and logged
+        task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
 
 
 async def _persist_trace(handle: TraceHandle, latency_ms: int) -> None:
     try:
-        async with async_session_maker() as session:
+        async with get_session_maker()() as session:
             record = TraceRecord(
                 user_id=handle.user_id,
                 request_id=handle.request_id,

@@ -32,6 +32,7 @@ class GraphRuntime:
     tool_registry: ToolRegistry | None = field(default=None, init=False)
     _tool_descriptions: list[dict[str, Any]] = field(default_factory=list)
     _mcp_connected: bool = field(default=False, init=False)
+    _mcp_lock: asyncio.Lock | None = field(default=None, init=False)
     chunker_service: ChunkerServiceClient = field(init=False)
     pg_ingester: PgIngesterClient = field(init=False)
     graph: Any = field(init=False)
@@ -197,24 +198,22 @@ class GraphRuntime:
                 state=state,
                 emit_status=lambda s: self.emit_status(state, s),
             )
-            try:
-                results = await asyncio.gather(
-                    *(
-                        self.tool_registry.invoke(call["tool"], call.get("arguments", {}), tool_context)
-                        for call in tool_calls
-                    )
-                )
-            except Exception as e:
-                logger.error(f"Error in tool execution: {e}")
-                return {
-                    "intermediate_steps": state.get("intermediate_steps", []),
-                    "tool_results": [{"ok": False, "error": str(e)}],
-                    "pending_tool_calls": [],
-                    "context": state.get("context", {}),
-                    "tool_retry_count": state.get("tool_retry_count", 0) + 1,
-                    "last_tool_error": str(e),
-                    "next_action": "reasoning",
-                }
+            results = await asyncio.gather(
+                *(
+                    self.tool_registry.invoke(call["tool"], call.get("arguments", {}), tool_context)
+                    for call in tool_calls
+                ),
+                return_exceptions=True,
+            )
+            # Normalize exceptions into tool-like error dicts so the rest of the flow can handle them
+            normalized_results: list[dict[str, Any]] = []
+            for r in results:
+                if isinstance(r, Exception):
+                    logger.error(f"Tool invocation raised: {r}")
+                    normalized_results.append({"ok": False, "error": str(r)})
+                else:
+                    normalized_results.append(r)
+            results = normalized_results
             t.output = {"results": results}
 
         errors = [result for result in results if not result.get("ok")]
