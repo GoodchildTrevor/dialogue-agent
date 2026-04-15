@@ -8,3 +8,4 @@ asyncpg>=0.29.0
 pgvector>=0.3.0
 pydantic>=2.7.0
 pydantic-settings>=2.3.0
+jsonschema>=4.23.0
