@@ -1,6 +1,6 @@
 # dialogue-bot
 
-`dialogue-bot` is the assistant runtime application for a universal corporate assistant built with FastAPI, LangGraph, Ollama, and PostgreSQL/PGvector. It orchestrates internal tools, external tool adapters, tracing, history search, and SSE streaming, but it does **not** implement `chunker_service`, `pg_ingester`, document parsing, ingestion internals, or external tool backends.
+`dialogue-bot` is the assistant runtime application for a universal corporate assistant built with FastAPI, LangGraph, Ollama, and PostgreSQL/PGvector. It orchestrates internal tools via MCP (Model Context Protocol), tracing, history search, and SSE streaming, but it does **not** implement `chunker_service`, `pg_ingester`, document parsing, ingestion internals, or external tool backends.
 
 ## Prerequisites
 
@@ -8,6 +8,7 @@
 - Docker Compose
 - Ollama installed and running
 - At least `ROUTER_MODEL`, `REASONING_MODEL`, and `EMBEDDING_MODEL` pulled into Ollama
+- MCP tool server (dialogue-agent-mcp) running and accessible at `MCP_SERVER_URL`
 
 ## Quick start
 
@@ -54,11 +55,23 @@ All three model names are configured exclusively via environment variables — n
 - `app/core/tracing.py` measures latency and persists structured traces asynchronously.
 - `app/db/` contains SQLAlchemy 2.0 models and database initialization with the `vector` extension.
 - `app/graph/` contains the LangGraph state, nodes, and transitions.
-- `app/tools/` contains internal tools and external HTTP tool adapters.
+- `app/graph/tool_registry.py` manages MCP client connection and tool invocation.
 - `app/services/` contains async clients for external infrastructure services.
 - `app/api/` exposes health, JSON chat, and SSE streaming endpoints.
+
+## MCP Integration
+
+Tools are provided via MCP (Model Context Protocol) from an external MCP server. The application:
+
+1. Connects to the MCP server at startup via `fastmcp.Client`
+2. Discovers available tools via `list_tools()`
+3. Invokes tools via `call_tool()` when the orchestrator requests them
+4. Properly disconnects from the MCP server on shutdown
+
+The MCP server URL is configured via `MCP_SERVER_URL` in the environment.
 
 ## Notes
 
 - Retrieval is designed to happen through external tools and PostgreSQL history search only.
 - External adapter paths are placeholders and should be aligned with real downstream contracts.
+- Tool execution happens through MCP; the application does not implement tools directly.
