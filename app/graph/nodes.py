@@ -32,6 +32,9 @@ class GraphRuntime:
     tool_registry: ToolRegistry | None = field(default=None, init=False)
     _tool_descriptions: list[dict[str, Any]] = field(default_factory=list)
     _mcp_connected: bool = field(default=False, init=False)
+    chunker_service: ChunkerServiceClient = field(init=False)
+    pg_ingester: PgIngesterClient = field(init=False)
+    graph: Any = field(init=False)
 
     def __post_init__(self) -> None:
         self._mcp_client = MCPClient(self.settings.MCP_SERVER_URL)
@@ -45,17 +48,20 @@ class GraphRuntime:
             timeout_seconds=self.settings.TOOL_REQUEST_TIMEOUT_SECONDS,
         )
         self.graph = self._build_graph()
+        self._mcp_lock = asyncio.Lock()
 
     async def connect_mcp(self) -> None:
         """Connect to the MCP server."""
         if self._mcp_client and not self._mcp_connected:
-            try:
-                await self._mcp_client.__aenter__()
-                self._mcp_connected = True
-                logger.info("Connected to MCP server")
-            except Exception as e:
-                logger.error(f"Failed to connect to MCP server: {e}")
-                raise
+            async with self._mcp_lock:
+                if self._mcp_client and not self._mcp_connected:
+                    try:
+                        await self._mcp_client.__aenter__()
+                        self._mcp_connected = True
+                        logger.info("Connected to MCP server")
+                    except Exception as e:
+                        logger.error(f"Failed to connect to MCP server: {e}")
+                        raise
 
     async def disconnect_mcp(self) -> None:
         """Disconnect from the MCP server."""
@@ -191,12 +197,24 @@ class GraphRuntime:
                 state=state,
                 emit_status=lambda s: self.emit_status(state, s),
             )
-            results = await asyncio.gather(
-                *(
-                    self.tool_registry.invoke(call["tool"], call.get("arguments", {}), tool_context)
-                    for call in tool_calls
+            try:
+                results = await asyncio.gather(
+                    *(
+                        self.tool_registry.invoke(call["tool"], call.get("arguments", {}), tool_context)
+                        for call in tool_calls
+                    )
                 )
-            )
+            except Exception as e:
+                logger.error(f"Error in tool execution: {e}")
+                return {
+                    "intermediate_steps": state.get("intermediate_steps", []),
+                    "tool_results": [{"ok": False, "error": str(e)}],
+                    "pending_tool_calls": [],
+                    "context": state.get("context", {}),
+                    "tool_retry_count": state.get("tool_retry_count", 0) + 1,
+                    "last_tool_error": str(e),
+                    "next_action": "reasoning",
+                }
             t.output = {"results": results}
 
         errors = [result for result in results if not result.get("ok")]
