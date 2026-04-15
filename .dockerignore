@@ -1,0 +1,34 @@
+# Git
+.git/
+.gitignore
+
+# Environments
+.env
+.venv/
+env/
+venv/
+ENV/
+
+# IDE/Editor
+.vscode/
+.idea/
+
+# Storage
+storage/
+
+# Logs
+*.log
+logs/
+
+# Python cache and build artifacts
+__pycache__/
+*.py[cod]
+*.so
+build/
+dist/
+*.egg-info/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
