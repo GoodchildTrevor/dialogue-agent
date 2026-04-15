@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -10,6 +11,8 @@ from app.core.llm_client import LLMClient
 from app.db.session import init_db
 from app.graph.nodes import GraphRuntime
 
+logger = logging.getLogger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -17,9 +20,13 @@ async def lifespan(app: FastAPI):
     llm = LLMClient(settings)
     runtime = GraphRuntime(settings=settings, ollama=llm)
     await init_db()
-    await runtime.refresh_tool_descriptions()
+    try:
+        await runtime.refresh_tool_descriptions()
+    except Exception as e:
+        logger.warning(f"Failed to refresh tool descriptions on startup: {e}")
     app.state.runtime = runtime
     yield
+    await runtime.disconnect_mcp()
     await llm.aclose()
 
 
