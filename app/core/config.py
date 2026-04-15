@@ -31,8 +31,8 @@ class Settings(BaseSettings):
     TOOL_REQUEST_TIMEOUT_SECONDS: float = 45.0
     HTTP_MAX_CONNECTIONS: int = 100
     HISTORY_SEARCH_LIMIT: int = 5
+    API_KEY: str = "default-secret-key-change-me"
 
 
-@lru_cache(maxsize=1)
 def get_settings() -> Settings:
     return Settings()

@@ -5,13 +5,23 @@ import json
 from typing import AsyncGenerator
 from uuid import uuid4
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, Depends, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.security import APIKeyHeader
 
 from app.api.schemas import ChatRequest, ChatResponse
+from app.core.config import get_settings
 from app.graph.nodes import GraphRuntime
 
 router = APIRouter()
+
+api_key_header = APIKeyHeader(name="X-API-Key")
+
+async def get_api_key(api_key: str = Depends(api_key_header)) -> str:
+    settings = get_settings()
+    if api_key != settings.API_KEY:
+        raise HTTPException(status_code=403, detail="Invalid API key")
+    return api_key
 
 
 def get_runtime(request: Request) -> GraphRuntime:
@@ -24,7 +34,7 @@ async def healthz() -> JSONResponse:
 
 
 @router.post("/chat", response_model=ChatResponse)
-async def chat(payload: ChatRequest, request: Request) -> ChatResponse:
+async def chat(payload: ChatRequest, request: Request, api_key: str = Depends(get_api_key)) -> ChatResponse:
     request_id = getattr(request.state, "request_id", None) or uuid4().hex
     runtime = get_runtime(request)
     state = runtime.build_initial_state(
@@ -37,7 +47,7 @@ async def chat(payload: ChatRequest, request: Request) -> ChatResponse:
 
 
 @router.post("/stream")
-async def stream(payload: ChatRequest, request: Request) -> StreamingResponse:
+async def stream(payload: ChatRequest, request: Request, api_key: str = Depends(get_api_key)) -> StreamingResponse:
     request_id = getattr(request.state, "request_id", None) or uuid4().hex
     runtime = get_runtime(request)
     queue: asyncio.Queue[str] = asyncio.Queue()
@@ -58,6 +68,8 @@ async def stream(payload: ChatRequest, request: Request) -> StreamingResponse:
                     status = await asyncio.wait_for(queue.get(), timeout=0.2)
                     yield f"event: status\ndata: {json.dumps({'message': status}, ensure_ascii=False)}\n\n"
                 except asyncio.TimeoutError:
+                    if task.done():
+                        break
                     continue
             result = await task
             answer = result.get("final_answer", "")
@@ -65,6 +77,7 @@ async def stream(payload: ChatRequest, request: Request) -> StreamingResponse:
                 yield f"event: token\ndata: {json.dumps({'token': token + ' '}, ensure_ascii=False)}\n\n"
             yield f"event: done\ndata: {json.dumps({'answer': answer}, ensure_ascii=False)}\n\n"
         except Exception as exc:
-            yield f"event: error\ndata: {json.dumps({'message': str(exc)}, ensure_ascii=False)}\n\n"
+            logger.error("Stream error", exc_info=exc)
+            yield f"event: error\ndata: {json.dumps({'message': 'Internal server error'}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
