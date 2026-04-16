@@ -77,26 +77,26 @@ All three model names are configured exclusively via environment variables — n
 
 ### pg-vector-ingester integration
 
-`pg-vector-ingester` is called by `PgIngesterClient` (`app/services/pg_ingester.py`) after a file's messages need to be vectorized — typically once a conversation turn completes or a file reaches `indexed` status.
+`pg-vector-ingester` is called by `PgIngesterClient` (`app/services/pg_ingester.py`) after new messages need to be vectorized — the caller passes the exact `message_ids` it wants embedded. Status updates on `files` are **not** handled here.
 
 **Ingest flow:**
 ```
 dialogue-agent
   │
-  └── PgIngesterClient.trigger_ingestion(source_id=file_id)
+  └── PgIngesterClient.trigger_ingestion(message_ids=[...])
         │
         ▼
   pg-vector-ingester POST /ingest
-        1. Load messages WHERE file_id = source_id AND embedding IS NULL
+        1. Load messages WHERE id IN (message_ids) AND embedding IS NULL
         2. Embed message.content via fastembed (paraphrase-multilingual-mpnet-base-v2)
         3. UPDATE messages SET embedding = $vec  (pgvector)
-        4. SET files.status = 'indexed'
 ```
 
 **Sync flow** (recovery / bootstrap):
 ```
-PgIngesterClient.sync(file_id=None)  →  POST /sync
+PgIngesterClient.sync(user_id=None)  →  POST /sync
   Find ALL messages WHERE embedding IS NULL → embed
+  Optional: scope to a single user_id
 ```
 
 This enables semantic search over past conversations:
