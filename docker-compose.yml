@@ -9,10 +9,26 @@ services:
       - "8000:8000"
     depends_on:
       - postgres
+      - pg-vector-ingester
     volumes:
       - file_storage:/app/storage
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  pg-vector-ingester:
+    build:
+      context: ../pg-vector-ingester
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+    ports:
+      - "8001:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
 
   postgres:
@@ -24,6 +40,11 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./postgres/init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
 
 volumes:
