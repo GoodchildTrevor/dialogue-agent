@@ -7,6 +7,11 @@ from app.graph.state import AssistantState
 
 
 class StrongModelNode():
+
+    def __init__(self, llm_client, settings):
+        self.llm_client = llm_client
+        self.settings = settings
+
     async def action(self, state: AssistantState) -> dict[str, Any]:
         task = (
             state.get("context", {}).get("escalation_task")
