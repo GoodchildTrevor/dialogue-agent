@@ -10,6 +10,11 @@ logger = logging.getLogger(__name__)
 
 
 class ToolExecutorNode():    
+    def __init__(self, emit_status, settings, tool_registry,):
+        self.emit_status = emit_status
+        self.tool_registry = tool_registry 
+        self.settings = settings
+
     async def tool_executor_node(self, state: AssistantState) -> dict[str, Any]:
         tool_calls = state.get("pending_tool_calls", [])
         payload = {"tool_calls": tool_calls}

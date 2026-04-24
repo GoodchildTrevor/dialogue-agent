@@ -49,6 +49,14 @@ class GraphRuntime:
             base_url=self.settings.PG_INGESTER_URL,
             timeout_seconds=self.settings.TOOL_REQUEST_TIMEOUT_SECONDS,
         )
+        self._router_node = RouterNode(self.llm_client, self.settings)
+        self._orchestrator_node = OrchestratorNode(
+            self.llm_client, self.settings, self.tool_registry
+        )
+        self._tool_executor_node = ToolExecutorNode(
+            self.emit_status, self.settings, self.tool_registry
+        )
+        self._strong_model_node = StrongModelNode(self.llm_client, self.settings)
         self.graph = self._build_graph()
         self._mcp_lock = asyncio.Lock()
 
@@ -105,16 +113,16 @@ class GraphRuntime:
         return await self.graph.ainvoke(state)
 
     async def router_node(self, state: AssistantState) -> dict[str, Any]:
-        return RouterNode.action(state=state)
+        return await self._router_node.action(state)
 
     async def orchestrator_node(self, state: AssistantState) -> dict[str, Any]:
-        return OrchestratorNode.action(state)  
+        return await self._orchestrator_node.action(state)
 
     async def tool_executor_node(self, state: AssistantState) -> dict[str, Any]:
-        return ToolExecutorNode.action(state)
+        return await self._tool_executor_node.action(state)
 
     async def strong_model_node(self, state: AssistantState) -> dict[str, Any]:
-        return StrongModelNode.action(state)
+        return await self._strong_model_node.action(state)
 
     async def emit_status(self, state: dict[str, Any], message: str) -> None:
         queue = state.get("status_queue")
