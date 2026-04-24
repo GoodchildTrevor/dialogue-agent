@@ -11,7 +11,7 @@ from fastapi.security import APIKeyHeader
 
 from app.api.schemas import ChatRequest, ChatResponse
 from app.core.config import Settings
-from app.graph.nodes import GraphRuntime
+from app.graph.utils import GraphRuntime
 
 router = APIRouter()
 

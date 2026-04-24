@@ -9,7 +9,7 @@ from app.api.routes import router as api_router
 from app.core.config import get_settings
 from app.core.llm_client import LLMClient
 from app.db.session import init_db
-from app.graph.nodes import GraphRuntime
+from app.graph.graph_runtime import GraphRuntime
 
 logger = logging.getLogger(__name__)
 
