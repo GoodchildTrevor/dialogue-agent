@@ -12,9 +12,8 @@ from app.graph.utils import (
 
 
 class RouterNode():    
-    def __init__(self, llm_client, settings, tool_registry,):
+    def __init__(self, llm_client, settings):
         self.llm_client = llm_client
-        self.tool_registry = tool_registry 
         self.settings = settings
         
     async def action(self, state: AssistantState) -> dict[str, Any]:

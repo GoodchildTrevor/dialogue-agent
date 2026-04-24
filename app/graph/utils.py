@@ -122,5 +122,5 @@ def inject_history_into_prompt(base_prompt: str, matches: list[dict[str, Any]], 
     history_section = build_history_section(matches, settings)
     if not history_section:
         return base_prompt
-    return f"{base_prompt}\n\n{history_section}"\
+    return f"{base_prompt}\n\n{history_section}"
     

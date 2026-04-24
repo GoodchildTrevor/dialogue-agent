@@ -29,6 +29,9 @@ class ToolRegistry:
         self._tools: dict[str, dict[str, Any]] = {}
         self._descriptions_cache: list[dict[str, Any]] | None = None
 
+    def has_tool(self, name: str) -> bool:
+        return name in self._tools
+
     async def refresh_tools(self) -> None:
         """Fetch available tools from MCP server and cache them."""
         try:

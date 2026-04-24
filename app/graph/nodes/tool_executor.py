@@ -15,7 +15,7 @@ class ToolExecutorNode():
         self.tool_registry = tool_registry 
         self.settings = settings
 
-    async def tool_executor_node(self, state: AssistantState) -> dict[str, Any]:
+    async def action(self, state: AssistantState) -> dict[str, Any]:
         tool_calls = state.get("pending_tool_calls", [])
         payload = {"tool_calls": tool_calls}
         async with trace(step_name="tool_executor", user_id=state["user_id"], request_id=state["request_id"], input=payload) as t:
@@ -55,8 +55,9 @@ class ToolExecutorNode():
             update["tool_retry_count"] = retries
             update["last_tool_error"] = errors[0]["error"]
             update["next_action"] = "reasoning" if retries >= self.settings.MAX_TOOL_RETRIES else "orchestrator"
-            return update
-        update["last_tool_error"] = None
-        update["next_action"] = "orchestrator"
+        else:
+            update["tool_retry_count"] = 0
+            update["last_tool_error"] = None
+            update["next_action"] = "orchestrator"
         return update
     

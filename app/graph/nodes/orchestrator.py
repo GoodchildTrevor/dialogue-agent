@@ -5,6 +5,7 @@ from typing import Any
 from app.core.tracing import trace
 from app.graph.prompt_fragments import ORCHESTRATOR_SYSTEM_PROMPT
 from app.graph.state import AssistantState
+from app.graph.tool_registry import ToolContext
 from app.graph.utils import (
     _extract_token_estimate,
     _normalize_tool_calls,
@@ -22,6 +23,9 @@ class OrchestratorNode:
         self.tool_registry = tool_registry
         self.settings = settings
 
+    async def _noop_emit(msg: str) -> None:
+        pass
+
     async def action(self, state: AssistantState) -> dict[str, Any]:
         user_message = state["messages"][-1]["content"]
         user_id = state["user_id"]
@@ -29,13 +33,20 @@ class OrchestratorNode:
         matches: list[dict[str, Any]] = []
         if self.tool_registry and self.tool_registry.has_tool("search_history"):
             try:
-                result = await self.tool_registry.call_tool(
-                    "search_history",
-                    query=user_message,
-                    user_id=user_id,
-                    limit=self.settings.HISTORY_SEARCH_LIMIT,
-                )
-                matches = result.get("matches", [])
+                if self.tool_registry and "search_history" in self.tool_registry._tools:
+                    ctx = ToolContext(user_id=user_id, state=dict(state), emit_status=self._noop_emit)
+                    result = await self.tool_registry.invoke(
+                        "search_history",
+                        arguments={
+                            "query": user_message,
+                            "user_id": user_id,
+                            "limit": self.settings.HISTORY_SEARCH_LIMIT,
+                        },
+                        context=ctx,
+                    )
+                    if result.get("ok"):
+                        content = result.get("result", {})
+                        matches = content.get("matches", [])
             except Exception as exc:
                 log.warning(
                     "search_history unavailable, skipping RAG loop: %s", exc
