@@ -25,6 +25,7 @@ class Settings(BaseSettings):
 
     CHUNKER_SERVICE_URL: str
     PG_INGESTER_URL: str
+    DISTANCE_THRESHOLD: float = 0.45
 
     MAX_TOOL_RETRIES: int = 3
     HTTP_TIMEOUT_SECONDS: float = 20.0
@@ -32,6 +33,7 @@ class Settings(BaseSettings):
     HTTP_MAX_CONNECTIONS: int = 100
     HISTORY_SEARCH_LIMIT: int = 5
     API_KEY: str = "default-secret-key-change-me"
+
 
 
 def get_settings() -> Settings:

@@ -1,37 +1,67 @@
 import json
+import logging
 from typing import Any
 
 from app.core.tracing import trace
 from app.graph.prompt_fragments import ORCHESTRATOR_SYSTEM_PROMPT
 from app.graph.state import AssistantState
 from app.graph.utils import (
-    _extract_token_estimate, 
+    _extract_token_estimate,
     _normalize_tool_calls,
     _parse_json_object,
 )
+from app.graph.utils import inject_history_into_prompt
 
-class OrchestratorNode(): 
+log = logging.getLogger(__name__)
 
-    def __init__(self, llm_client, settings, tool_registry,):
+
+class OrchestratorNode:
+
+    def __init__(self, llm_client, settings, tool_registry):
         self.llm_client = llm_client
-        self.tool_registry = tool_registry 
+        self.tool_registry = tool_registry
         self.settings = settings
 
     async def action(self, state: AssistantState) -> dict[str, Any]:
         user_message = state["messages"][-1]["content"]
+        user_id = state["user_id"]
+
+        matches: list[dict[str, Any]] = []
+        if self.tool_registry and self.tool_registry.has_tool("search_history"):
+            try:
+                result = await self.tool_registry.call_tool(
+                    "search_history",
+                    query=user_message,
+                    user_id=user_id,
+                    limit=self.settings.HISTORY_SEARCH_LIMIT,
+                )
+                matches = result.get("matches", [])
+            except Exception as exc:
+                log.warning(
+                    "search_history unavailable, skipping RAG loop: %s", exc
+                )
+
+        system_prompt = inject_history_into_prompt(ORCHESTRATOR_SYSTEM_PROMPT, matches, self.settings)
+
         payload = {
             "message": user_message,
             "context": state.get("context", {}),
             "intermediate_steps": state.get("intermediate_steps", []),
             "tool_retry_count": state.get("tool_retry_count", 0),
         }
-        async with trace(step_name="orchestrator", user_id=state["user_id"], request_id=state["request_id"], input=payload) as t:
+
+        async with trace(
+            step_name="orchestrator",
+            user_id=user_id,
+            request_id=state["request_id"],
+            input=payload,
+        ) as t:
             tool_descriptions = json.dumps(
                 self.tool_registry.describe_for_model() if self.tool_registry else [],
                 ensure_ascii=False,
             )
             system_message = (
-                f"{ORCHESTRATOR_SYSTEM_PROMPT}\n\n"
+                f"{system_prompt}\n\n"
                 f"Available tools (JSON): {tool_descriptions}\n"
             )
             response = await self.llm_client.chat(

@@ -5,7 +5,6 @@ from typing import Any
 
 from app.graph.state import ToolCall
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -69,3 +68,59 @@ def _normalize_tool_calls(raw_calls: Any) -> list[ToolCall]:
         if isinstance(tool, str) and isinstance(arguments, dict):
             normalized.append({"tool": tool, "arguments": arguments})
     return normalized
+
+
+def build_history_section(matches: list[dict[str, Any]], settings) -> str:
+    """Convert search_history matches into a Relevant past context block.
+
+    :param matches: List of match dicts returned by the ``search_history`` MCP tool.
+        Each dict must contain at least ``role``, ``content``, and ``distance``.
+        ``created_at`` (ISO-8601 string) is optional but rendered when present.
+    :returns: A formatted markdown string starting with ``## Relevant past context``,
+        or an empty string if there are no relevant matches.
+    """
+    if not matches:
+        return ""
+
+    filtered = [
+        m for m in matches
+        if isinstance(m.get("distance"), (int, float))
+        and m["distance"] <= settings.DISTANCE_THRESHOLD
+    ]
+
+    if not filtered:
+        logger.debug(
+            "search_history returned %d match(es) but all exceeded distance threshold %.2f",
+            len(matches),
+            settings.DISTANCE_THRESHOLD,
+        )
+        return ""
+
+    lines: list[str] = ["## Relevant past context", ""]
+    for i, m in enumerate(filtered, start=1):
+        role = str(m.get("role") or "unknown").capitalize()
+        content = str(m.get("content") or "").strip()
+        created_at = m.get("created_at") or ""
+        date_suffix = f", {created_at[:10]}" if created_at else ""
+        lines.append(f"{i}. [{role}{date_suffix}]: {content}")
+
+    return "\n".join(lines)
+
+
+def inject_history_into_prompt(base_prompt: str, matches: list[dict[str, Any]], settings) -> str:
+    """Return *base_prompt* with the history section appended when relevant.
+
+    This is the single entry-point intended to be called from the orchestrator
+    node at the start of every turn, right after ``search_history`` resolves.
+
+    :param base_prompt: The orchestrator's base system prompt string.
+    :param matches: List of match dicts from ``search_history``. Pass ``[]`` on error.
+
+    :returns: ``base_prompt`` unchanged when no relevant history exists,
+    otherwise ``base_prompt + "\\n\\n" + history_section``.
+    """
+    history_section = build_history_section(matches, settings)
+    if not history_section:
+        return base_prompt
+    return f"{base_prompt}\n\n{history_section}"\
+    
