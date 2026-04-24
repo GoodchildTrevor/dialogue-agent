@@ -20,7 +20,7 @@ async def lifespan(app: FastAPI):
     app.title = settings.APP_NAME
 
     llm = LLMClient(settings)
-    runtime = GraphRuntime(settings=settings, ollama=llm)
+    runtime = GraphRuntime(settings=settings, llm_client=llm)
 
     try:
         await runtime.refresh_tool_descriptions()
