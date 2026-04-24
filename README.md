@@ -9,6 +9,12 @@
 - Ollama installed and running
 - At least `ROUTER_MODEL`, `REASONING_MODEL`, and `EMBEDDING_MODEL` pulled into Ollama
 - MCP tool server (dialogue-agent-mcp) running and accessible at `MCP_SERVER_URL`
+- Both repos cloned side-by-side (required for `pg-vector-ingester` build context):
+  ```
+  projects/
+  ├── dialogue-agent/
+  └── pg-vector-ingester/
+  ```
 
 ## Quick start
 
@@ -58,6 +64,52 @@ All three model names are configured exclusively via environment variables — n
 - `app/graph/tool_registry.py` manages MCP client connection and tool invocation.
 - `app/services/` contains async clients for external infrastructure services.
 - `app/api/` exposes health, JSON chat, and SSE streaming endpoints.
+
+## Service ecosystem
+
+`dialogue-agent` is the central orchestrator. It depends on several microservices:
+
+| Service | Repo | Port | Purpose |
+|---|---|---|---|
+| `dialogue-agent` (this) | — | `8000` | LangGraph orchestrator, SSE streaming, history search |
+| `pg-vector-ingester` | [pg-vector-ingester](https://github.com/GoodchildTrevor/pg-vector-ingester) | `8001` | Embeds dialogue messages, persists vectors to PostgreSQL |
+| `qdrant-ingester` | [qdrant-ingester](https://github.com/GoodchildTrevor/qdrant-ingester) | `8002` | Chunks uploaded files, embeds and upserts into Qdrant |
+
+### pg-vector-ingester integration
+
+`pg-vector-ingester` is called by `PgIngesterClient` (`app/services/pg_ingester.py`) after new messages need to be vectorized — the caller passes the exact `message_ids` it wants embedded. Status updates on `files` are **not** handled here.
+
+**Ingest flow:**
+```
+dialogue-agent
+  │
+  └── PgIngesterClient.trigger_ingestion(message_ids=[...])
+        │
+        ▼
+  pg-vector-ingester POST /ingest
+        1. Load messages WHERE id IN (message_ids) AND embedding IS NULL
+        2. Embed message.content via fastembed (paraphrase-multilingual-mpnet-base-v2)
+        3. UPDATE messages SET embedding = $vec  (pgvector)
+```
+
+**Sync flow** (recovery / bootstrap):
+```
+PgIngesterClient.sync(user_id=None)  →  POST /sync
+  Find ALL messages WHERE embedding IS NULL → embed
+  Optional: scope to a single user_id
+```
+
+This enables semantic search over past conversations:
+```sql
+SELECT content FROM messages
+ORDER BY embedding <=> $query_vector
+LIMIT 5;
+```
+So when a user asks something similar to a past question, the agent can surface the earlier dialogue and its resolved answer directly, without repeating the full reasoning chain.
+
+### qdrant-ingester integration
+
+`qdrant-ingester` handles uploaded *file* documents (PDFs, DOCX, etc.) — it chunks them, creates dense + sparse embeddings, and stores points in Qdrant. It operates independently of `pg-vector-ingester`.
 
 ## MCP Integration
 
