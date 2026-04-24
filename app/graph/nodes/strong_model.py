@@ -1,0 +1,52 @@
+import json
+from typing import Any
+
+from app.core.tracing import trace
+from app.graph.prompt_fragments import REASONING_SYSTEM_PROMPT  
+from app.graph.state import AssistantState
+
+
+class StrongModelNode():
+    async def action(self, state: AssistantState) -> dict[str, Any]:
+        task = (
+            state.get("context", {}).get("escalation_task")
+            or state["messages"][-1]["content"]
+        )
+        payload = {
+            "task": task,
+            "context": state.get("context", {}),
+            "intermediate_steps": state.get("intermediate_steps", []),
+        }
+        async with trace(
+            step_name="reasoning_model",
+            user_id=state["user_id"],
+            request_id=state["request_id"],
+            input=payload,
+        ) as t:
+            t.model_used = self.settings.REASONING_MODEL
+            answer = await self._invoke_reasoning_model(task, state)
+            t.output = {"answer": answer}
+        return {"final_answer": answer, "next_action": "end"}
+
+    async def _invoke_reasoning_model(self, task: str, state: AssistantState) -> str:
+        """Invoke the reasoning model for complex tasks."""
+        prompt = [
+            {"role": "system", "content": REASONING_SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {
+                        "task": task,
+                        "context": state.get("context", {}),
+                        "intermediate_steps": state.get("intermediate_steps", []),
+                    },
+                    ensure_ascii=False,
+                ),
+            },
+        ]
+        response = await self.llm_client.chat(
+            model=self.settings.REASONING_MODEL,
+            messages=prompt,
+        )
+        return response.get("message", {}).get("content", "")
+    
