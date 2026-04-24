@@ -17,7 +17,7 @@ class ToolContext:
     """Context passed to tool invocations containing user/session info and status callback."""
     user_id: str
     state: dict[str, Any]
-    emit_status: Callable[[str], Awaitable[None]]
+    emit_status: Callable[[str], Awaitable[None]] | None = None
 
 
 class ToolRegistry:
