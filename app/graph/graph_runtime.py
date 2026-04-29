@@ -22,7 +22,7 @@ from app.graph.nodes.tool_executor import ToolExecutorNode
 from app.graph.nodes.strong_model import StrongModelNode
 
 from app.services.chunker_service import ChunkerServiceClient
-from app.services.pg_ingester import PgIngesterClient
+from app.services.pg_ingester import IngesterService
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,7 @@ class GraphRuntime:
     _mcp_connected: bool = field(default=False, init=False)
     _mcp_lock: asyncio.Lock | None = field(default=None, init=False)
     chunker_service: ChunkerServiceClient = field(init=False)
-    pg_ingester: PgIngesterClient = field(init=False)
+    pg_ingester: IngesterService = field(init=False)
     graph: Any = field(init=False)
 
     def __post_init__(self) -> None:
@@ -51,10 +51,7 @@ class GraphRuntime:
             base_url=self.settings.CHUNKER_SERVICE_URL,
             timeout_seconds=self.settings.TOOL_REQUEST_TIMEOUT_SECONDS,
         )
-        self.pg_ingester = PgIngesterClient(
-            base_url=self.settings.PG_INGESTER_URL,
-            timeout_seconds=self.settings.TOOL_REQUEST_TIMEOUT_SECONDS,
-        )
+        self.pg_ingester = IngesterService()
         self._router_node = RouterNode(self.llm_client, self.settings)
         self._orchestrator_node = OrchestratorNode(
             self.llm_client, self.settings, self.tool_registry

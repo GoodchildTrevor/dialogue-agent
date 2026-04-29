@@ -25,8 +25,12 @@ class Settings(BaseSettings):
     POSTGRES_URL: str
 
     CHUNKER_SERVICE_URL: str
-    PG_INGESTER_URL: str
     DISTANCE_THRESHOLD: float = 0.45
+
+    # Embedding (in-process via fastembed)
+    EMBEDDING_MODEL_NAME: str
+    EMBEDDING_BATCH_SIZE: int
+    EMBEDDING_INSERT_BATCH_SIZE: int
 
     MAX_TOOL_RETRIES: int = 3
     HTTP_TIMEOUT_SECONDS: float = 20.0
