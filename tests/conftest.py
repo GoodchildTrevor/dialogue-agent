@@ -1,5 +1,5 @@
 """Tests configuration and shared fixtures."""
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -37,9 +37,3 @@ def _Settings():
     settings.REASONING_MODEL = "test-reasoning-model"
     settings.MAX_TOKENS = 1000
     return settings
-
-
-class AsyncMock(MagicMock):
-    """Mock for async functions."""
-    async def __call__(self, *args, **kwargs):
-        return super().__call__(*args, **kwargs)
