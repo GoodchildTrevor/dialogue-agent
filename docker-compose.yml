@@ -16,6 +16,15 @@ services:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
 
+  test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: pytest --tb=short -q
+    env_file:
+      - .env
+    profiles: ["test"]
+
   pg-vector-ingester:
     build:
       context: ../pg-vector-ingester
