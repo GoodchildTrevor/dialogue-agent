@@ -5,7 +5,6 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-import httpx
 from fastmcp import Client as MCPClient
 from fastmcp.client.transports import StreamableHttpTransport
 from langgraph.graph import END, START, StateGraph
@@ -23,6 +22,7 @@ from app.graph.nodes.strong_model import StrongModelNode
 
 from app.services.chunker_service import ChunkerServiceClient
 from app.services.pg_ingester import IngesterService
+from app.services.history_service import HistoryService
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +38,7 @@ class GraphRuntime:
     _mcp_lock: asyncio.Lock | None = field(default=None, init=False)
     chunker_service: ChunkerServiceClient = field(init=False)
     pg_ingester: IngesterService = field(init=False)
+    history_service: HistoryService = field(init=False)
     graph: Any = field(init=False)
 
     def __post_init__(self) -> None:
@@ -51,10 +52,17 @@ class GraphRuntime:
             base_url=self.settings.CHUNKER_SERVICE_URL,
             timeout_seconds=self.settings.TOOL_REQUEST_TIMEOUT_SECONDS,
         )
+        # IngesterService must be created before HistoryService
+        # (HistoryService reuses its embedding model)
         self.pg_ingester = IngesterService()
+        self.history_service = HistoryService(self.pg_ingester)
+
         self._router_node = RouterNode(self.llm_client, self.settings)
         self._orchestrator_node = OrchestratorNode(
-            self.llm_client, self.settings, self.tool_registry
+            self.llm_client,
+            self.settings,
+            self.tool_registry,
+            self.history_service,
         )
         self._tool_executor_node = ToolExecutorNode(
             self.emit_status, self.settings, self.tool_registry
@@ -64,7 +72,6 @@ class GraphRuntime:
         self._mcp_lock = asyncio.Lock()
 
     async def connect_mcp(self) -> None:
-        """Connect to the MCP server."""
         if self._mcp_client and not self._mcp_connected:
             async with self._mcp_lock:
                 if self._mcp_client and not self._mcp_connected:
@@ -77,7 +84,6 @@ class GraphRuntime:
                         raise
 
     async def disconnect_mcp(self) -> None:
-        """Disconnect from the MCP server."""
         if self._mcp_client and self._mcp_connected:
             try:
                 await self._mcp_client.__aexit__(None, None, None)
@@ -87,7 +93,6 @@ class GraphRuntime:
                 logger.error(f"Error disconnecting from MCP server: {e}")
 
     async def refresh_tool_descriptions(self) -> None:
-        """Refresh tool descriptions from MCP server."""
         if not self._mcp_connected:
             await self.connect_mcp()
         if self.tool_registry:

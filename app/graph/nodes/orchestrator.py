@@ -5,50 +5,42 @@ from typing import Any
 from app.core.tracing import trace
 from app.graph.prompt_fragments import ORCHESTRATOR_SYSTEM_PROMPT
 from app.graph.state import AssistantState
-from app.graph.tool_registry import ToolContext
 from app.graph.utils import (
     _extract_token_estimate,
     _normalize_tool_calls,
     _parse_json_object,
+    inject_history_into_prompt,
 )
-from app.graph.utils import inject_history_into_prompt
 
 log = logging.getLogger(__name__)
 
 
 class OrchestratorNode:
 
-    def __init__(self, llm_client, settings, tool_registry):
+    def __init__(self, llm_client, settings, tool_registry, history_service):
         self.llm_client = llm_client
         self.tool_registry = tool_registry
         self.settings = settings
+        self.history_service = history_service
 
     async def action(self, state: AssistantState) -> dict[str, Any]:
         user_message = state["messages"][-1]["content"]
         user_id = state["user_id"]
 
+        # Always enrich context with semantically relevant past messages.
         matches: list[dict[str, Any]] = []
-        if self.tool_registry and self.tool_registry.has_tool("search_history"):
-            try:
-                ctx = ToolContext(user_id=user_id, state=dict(state))
-                result = await self.tool_registry.invoke(
-                    "search_history",
-                    arguments={
-                        "query": user_message,
-                        "user_id": user_id,
-                        "limit": self.settings.HISTORY_SEARCH_LIMIT,
-                    },
-                    context=ctx,
-                )
-                if result.get("ok"):
-                    content = result.get("result", {})
-                    matches = content.get("matches", [])
-            except Exception as exc:
-                log.warning(
-                    "search_history unavailable, skipping RAG loop: %s", exc
-                )
+        try:
+            matches = await self.history_service.search(
+                query=user_message,
+                user_id=user_id,
+                limit=self.settings.HISTORY_SEARCH_LIMIT,
+            )
+        except Exception as exc:
+            log.warning("history search failed, continuing without context: %s", exc)
 
-        system_prompt = inject_history_into_prompt(ORCHESTRATOR_SYSTEM_PROMPT, matches, self.settings)
+        system_prompt = inject_history_into_prompt(
+            ORCHESTRATOR_SYSTEM_PROMPT, matches, self.settings
+        )
 
         payload = {
             "message": user_message,
@@ -81,7 +73,10 @@ class OrchestratorNode:
             )
             t.estimated_tokens = _extract_token_estimate(response)
             content = response.get("message", {}).get("content", "")
-            parsed = _parse_json_object(content) or {"action": "escalate", "task": user_message}
+            parsed = (
+                _parse_json_object(content)
+                or {"action": "escalate", "task": user_message}
+            )
             t.output = parsed
 
         action = parsed.get("action")
@@ -99,4 +94,3 @@ class OrchestratorNode:
                 "escalation_task": parsed.get("task", user_message),
             },
         }
-    
