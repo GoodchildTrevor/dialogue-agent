@@ -5,7 +5,9 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+import httpx
 from fastmcp import Client as MCPClient
+from fastmcp.client.transports import StreamableHttpTransport
 from langgraph.graph import END, START, StateGraph
 
 from app.core.config import Settings
@@ -14,7 +16,7 @@ from app.graph.edges import after_orchestrator, after_router, after_tools
 from app.graph.state import AssistantState
 from app.graph.tool_registry import ToolRegistry
 
-from app.graph.nodes.router import RouterNode   
+from app.graph.nodes.router import RouterNode
 from app.graph.nodes.orchestrator import OrchestratorNode
 from app.graph.nodes.tool_executor import ToolExecutorNode
 from app.graph.nodes.strong_model import StrongModelNode
@@ -39,7 +41,11 @@ class GraphRuntime:
     graph: Any = field(init=False)
 
     def __post_init__(self) -> None:
-        self._mcp_client = MCPClient(self.settings.MCP_SERVER_URL)
+        transport = StreamableHttpTransport(
+            self.settings.MCP_SERVER_URL,
+            headers={"Authorization": f"Bearer {self.settings.MCP_AUTH_TOKEN}"},
+        )
+        self._mcp_client = MCPClient(transport)
         self.tool_registry = ToolRegistry(self.settings, self._mcp_client)
         self.chunker_service = ChunkerServiceClient(
             base_url=self.settings.CHUNKER_SERVICE_URL,
@@ -153,4 +159,3 @@ class GraphRuntime:
         )
         graph.add_edge("reasoning", END)
         return graph.compile()
-    

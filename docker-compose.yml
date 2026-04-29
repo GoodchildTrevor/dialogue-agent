@@ -5,6 +5,8 @@ services:
       dockerfile: Dockerfile
     env_file:
       - .env
+    environment:
+      - MCP_AUTH_TOKEN=${MCP_AUTH_TOKEN}
     ports:
       - "8000:8000"
     depends_on:

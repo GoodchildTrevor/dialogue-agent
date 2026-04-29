@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     REASONING_MODEL: str
 
     MCP_SERVER_URL: str
+    MCP_AUTH_TOKEN: str
 
     POSTGRES_URL: str
 
@@ -33,7 +34,6 @@ class Settings(BaseSettings):
     HTTP_MAX_CONNECTIONS: int = 100
     HISTORY_SEARCH_LIMIT: int = 5
     API_KEY: str = "default-secret-key-change-me"
-
 
 
 def get_settings() -> Settings:
