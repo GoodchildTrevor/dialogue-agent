@@ -16,25 +16,26 @@ from tests.conftest import base_state
 # ---------------------------------------------------------------------------
 
 class TestAfterRouter:
-    def test_final_answer_set_returns_end(self):
-        state = base_state(final_answer="done")
+    def test_final_answer_returns_end(self):
+        state = {"final_answer": "Done", "next_action": "orchestrator"}
         assert after_router(state) == "end"
 
-    def test_next_action_respected_when_no_final_answer(self):
-        state = base_state(final_answer="", next_action="reasoning")
+    def test_no_final_answer_returns_next_action(self):
+        state = {"next_action": "orchestrator"}
+        assert after_router(state) == "orchestrator"
+
+    def test_no_final_answer_reasoning_next_action(self):
+        state = {"next_action": "reasoning"}
         assert after_router(state) == "reasoning"
 
-    def test_defaults_to_orchestrator_when_no_next_action(self):
-        # next_action absent / empty string
-        state = base_state(final_answer="", next_action="")
-        # empty string is falsy so .get() returns it, but the fallback is "orchestrator"
-        # Let's use a state without next_action key at all to hit the default
-        minimal: dict = {"messages": [], "user_id": "", "request_id": ""}
-        assert after_router(minimal) == "orchestrator"  # type: ignore[arg-type]
+    def test_empty_state_defaults_to_orchestrator(self):
+        """If neither final_answer nor next_action is set, default is 'orchestrator'."""
+        assert after_router({}) == "orchestrator"
 
-    def test_empty_final_answer_does_not_trigger_end(self):
-        state = base_state(final_answer="", next_action="orchestrator")
-        assert after_router(state) != "end"
+    def test_empty_final_answer_string_is_falsy_continue(self):
+        """An empty string for final_answer must NOT route to end."""
+        state = {"final_answer": "", "next_action": "orchestrator"}
+        assert after_router(state) == "orchestrator"
 
 
 # ---------------------------------------------------------------------------
@@ -42,21 +43,21 @@ class TestAfterRouter:
 # ---------------------------------------------------------------------------
 
 class TestAfterOrchestrator:
-    def test_final_answer_set_returns_end(self):
-        state = base_state(final_answer="result")
+    def test_final_answer_returns_end(self):
+        state = {"final_answer": "All done.", "next_action": "reasoning"}
         assert after_orchestrator(state) == "end"
 
-    def test_routes_to_next_action_when_set(self):
-        state = base_state(final_answer="", next_action="tools")
+    def test_no_final_answer_returns_next_action(self):
+        state = {"next_action": "tools"}
         assert after_orchestrator(state) == "tools"
 
-    def test_defaults_to_reasoning_when_no_next_action(self):
-        minimal: dict = {"messages": [], "user_id": "", "request_id": ""}
-        assert after_orchestrator(minimal) == "reasoning"  # type: ignore[arg-type]
+    def test_default_fallback_is_reasoning(self):
+        """Without next_action, default fallback is 'reasoning'."""
+        assert after_orchestrator({}) == "reasoning"
 
-    def test_empty_final_answer_does_not_trigger_end(self):
-        state = base_state(final_answer="", next_action="reasoning")
-        assert after_orchestrator(state) != "end"
+    def test_empty_final_answer_continues(self):
+        state = {"final_answer": "", "next_action": "tools"}
+        assert after_orchestrator(state) == "tools"
 
 
 # ---------------------------------------------------------------------------
@@ -64,19 +65,14 @@ class TestAfterOrchestrator:
 # ---------------------------------------------------------------------------
 
 class TestAfterTools:
-    def test_routes_to_next_action(self):
-        state = base_state(next_action="orchestrator")
+    def test_returns_next_action(self):
+        state = {"next_action": "orchestrator"}
         assert after_tools(state) == "orchestrator"
 
-    def test_defaults_to_orchestrator_when_absent(self):
-        minimal: dict = {"messages": [], "user_id": "", "request_id": ""}
-        assert after_tools(minimal) == "orchestrator"  # type: ignore[arg-type]
+    def test_default_fallback_is_orchestrator(self):
+        """Without next_action, after_tools defaults to 'orchestrator'."""
+        assert after_tools({}) == "orchestrator"
 
-    def test_custom_next_action_respected(self):
-        state = base_state(next_action="reasoning")
-        assert after_tools(state) == "reasoning"
-
-    def test_final_answer_does_not_short_circuit(self):
-        """after_tools does NOT check final_answer; it always follows next_action."""
-        state = base_state(final_answer="done", next_action="orchestrator")
-        assert after_tools(state) == "orchestrator"
+    def test_arbitrary_next_action_is_forwarded(self):
+        state = {"next_action": "some_other_node"}
+        assert after_tools(state) == "some_other_node"
