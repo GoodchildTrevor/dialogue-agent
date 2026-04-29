@@ -1,9 +1,14 @@
-"""Unit tests for LangGraph edge functions (after_router, after_orchestrator, after_tools)."""
+"""Unit tests for LangGraph edge functions.
+
+after_router, after_orchestrator, after_tools are pure synchronous functions;
+no mocking required.
+"""
 from __future__ import annotations
 
 import pytest
 
 from app.graph.edges import after_orchestrator, after_router, after_tools
+from tests.conftest import base_state
 
 
 # ---------------------------------------------------------------------------
