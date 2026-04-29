@@ -1,6 +1,3 @@
-<<<<<<< HEAD
-"""Tests for edge transitions."""
-=======
 """Unit tests for LangGraph edge functions.
 
 after_router, after_orchestrator, after_tools are pure synchronous functions;
@@ -11,7 +8,6 @@ from __future__ import annotations
 import pytest
 
 from app.graph.edges import after_orchestrator, after_router, after_tools
-from tests.conftest import base_state
 
 
 # ---------------------------------------------------------------------------
@@ -79,4 +75,3 @@ class TestAfterTools:
     def test_arbitrary_next_action_is_forwarded(self):
         state = {"next_action": "some_other_node"}
         assert after_tools(state) == "some_other_node"
->>>>>>> f6d283305a47cf8b1710c7cd1e4d0b6294657e47
