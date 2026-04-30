@@ -30,6 +30,8 @@ Analyze the user's message and return strict JSON.
    - The message is a greeting, thanks, small talk, or a factual question answerable in one
      sentence without tools.
    - The message does NOT ask for code, analysis, comparison, file operations, or web search.
+   - The question does NOT concern recent events, current news, sports results, scores, standings,
+     prices, weather, or any fact that may have changed after 2023. For those, set needs_tools = true.
    - You can provide a complete answer in the "answer" field.
 
 2. needs_tools = true IF the message requires searching documents, browsing the web, viewing

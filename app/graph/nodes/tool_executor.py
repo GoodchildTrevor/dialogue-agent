@@ -33,11 +33,18 @@ class ToolExecutorNode():
             )
             # Normalize exceptions into tool-like error dicts so the rest of the flow can handle them
             normalized_results: list[dict[str, Any]] = []
-            for r in results:
+            for call, r in zip(tool_calls, results):
                 if isinstance(r, Exception):
-                    logger.error(f"Tool invocation raised: {r}")
+                    logger.error(
+                        "[%s] tool_executor: tool=%s raised %s",
+                        state["request_id"], call.get("tool"), r,
+                    )
                     normalized_results.append({"ok": False, "error": str(r)})
                 else:
+                    logger.info(
+                        "[%s] tool_executor: tool=%s ok=%s",
+                        state["request_id"], call.get("tool"), r.get("ok"),
+                    )
                     normalized_results.append(r)
             results = normalized_results
             t.output = {"results": results}
@@ -60,4 +67,3 @@ class ToolExecutorNode():
             update["last_tool_error"] = None
             update["next_action"] = "orchestrator"
         return update
-    
