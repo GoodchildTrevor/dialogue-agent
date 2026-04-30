@@ -21,7 +21,12 @@ class ToolContext:
 
 
 class ToolRegistry:
-    """Registry for MCP tools with invocation and description capabilities."""
+    """Registry for MCP tools with invocation and description capabilities.
+
+    Uses fastmcp.Client as a per-call context manager because
+    StreamableHttpTransport is stateless — every list_tools / call_tool
+    opens its own HTTP session and closes it when done.
+    """
 
     def __init__(self, settings: Settings, mcp_client: MCPClient) -> None:
         self._settings = settings
@@ -32,19 +37,24 @@ class ToolRegistry:
     def has_tool(self, name: str) -> bool:
         return name in self._tools
 
+    @property
+    def is_empty(self) -> bool:
+        return len(self._tools) == 0
+
     async def refresh_tools(self) -> None:
         """Fetch available tools from MCP server and cache them."""
         try:
-            tools_list = await self._mcp_client.list_tools()
+            async with self._mcp_client:
+                tools_list = await self._mcp_client.list_tools()
             self._tools.clear()
             for tool in tools_list:
                 tool_name = tool.get("name") if isinstance(tool, dict) else getattr(tool, "name", None)
                 if tool_name:
                     self._tools[tool_name] = tool
             self._descriptions_cache = None
-            logger.info(f"Refreshed {len(self._tools)} tools from MCP server")
+            logger.info("Refreshed %d tools from MCP server", len(self._tools))
         except Exception as e:
-            logger.error(f"Failed to refresh tools from MCP server: {e}")
+            logger.error("Failed to refresh tools from MCP server: %s", e)
             self._tools = {}
 
     def describe_for_model(self) -> list[dict[str, Any]]:
@@ -79,7 +89,7 @@ class ToolRegistry:
     ) -> ToolExecutionResult:
         """Invoke a tool by name with the given arguments and context."""
         if tool_name not in self._tools:
-            logger.warning(f"Unknown tool requested: {tool_name}")
+            logger.warning("Unknown tool requested: %s", tool_name)
             return {
                 "tool": tool_name,
                 "ok": False,
@@ -87,18 +97,15 @@ class ToolRegistry:
             }
 
         try:
-            # Emit status update if provided
             if context.emit_status:
                 await context.emit_status(f"Calling tool: {tool_name}")
 
-            # Call the MCP tool
-            result = await self._mcp_client.call_tool(tool_name, arguments=arguments)
+            async with self._mcp_client:
+                result = await self._mcp_client.call_tool(tool_name, arguments=arguments)
 
-            # Extract content from MCP result
             if isinstance(result, dict):
                 content = result.get("content", result)
             else:
-                # Handle object-style results
                 content = getattr(result, "content", result)
 
             return {
@@ -108,7 +115,7 @@ class ToolRegistry:
             }
 
         except Exception as e:
-            logger.exception(f"Tool invocation failed: {tool_name}")
+            logger.exception("Tool invocation failed: %s", tool_name)
             return {
                 "tool": tool_name,
                 "ok": False,
