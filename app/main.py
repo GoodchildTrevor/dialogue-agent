@@ -22,17 +22,20 @@ async def lifespan(app: FastAPI):
     llm = LLMClient(settings)
     runtime = GraphRuntime(settings=settings, llm_client=llm)
 
+    # Pre-warm the tool cache. If MCP is unavailable the warning is logged
+    # and the orchestrator will retry on the first real request.
     try:
         await runtime.refresh_tool_descriptions()
     except Exception as e:
-        logger.warning(f"Failed to refresh tool descriptions on startup: {e}")
-    app.state.runtime = runtime
+        logger.warning("Failed to refresh tool descriptions on startup: %s", e)
 
+    app.state.runtime = runtime
     app.include_router(api_router, prefix=settings.API_V1_PREFIX)
 
     yield
 
-    await runtime.disconnect_mcp()
+    # No persistent MCP connection to close — StreamableHttpTransport is
+    # stateless and each call manages its own session.
     await llm.aclose()
 
 

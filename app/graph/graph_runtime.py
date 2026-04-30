@@ -33,9 +33,6 @@ class GraphRuntime:
     llm_client: LLMClient
     _mcp_client: MCPClient | None = field(default=None, init=False)
     tool_registry: ToolRegistry | None = field(default=None, init=False)
-    _tool_descriptions: list[dict[str, Any]] = field(default_factory=list)
-    _mcp_connected: bool = field(default=False, init=False)
-    _mcp_lock: asyncio.Lock | None = field(default=None, init=False)
     chunker_service: ChunkerServiceClient = field(init=False)
     pg_ingester: IngesterService = field(init=False)
     history_service: HistoryService = field(init=False)
@@ -57,8 +54,6 @@ class GraphRuntime:
             base_url=self.settings.CHUNKER_SERVICE_URL,
             timeout=self.settings.TOOL_REQUEST_TIMEOUT_SECONDS,
         )
-        # IngesterService must be created before HistoryService
-        # (HistoryService reuses its embedding model)
         self.pg_ingester = IngesterService()
         self.history_service = HistoryService(self.pg_ingester)
 
@@ -74,32 +69,13 @@ class GraphRuntime:
         )
         self._strong_model_node = StrongModelNode(self.llm_client, self.settings)
         self.graph = self._build_graph()
-        self._mcp_lock = asyncio.Lock()
-
-    async def connect_mcp(self) -> None:
-        if self._mcp_client and not self._mcp_connected:
-            async with self._mcp_lock:
-                if self._mcp_client and not self._mcp_connected:
-                    try:
-                        await self._mcp_client.__aenter__()
-                        self._mcp_connected = True
-                        logger.info("Connected to MCP server")
-                    except Exception as e:
-                        logger.error(f"Failed to connect to MCP server: {e}")
-                        raise
-
-    async def disconnect_mcp(self) -> None:
-        if self._mcp_client and self._mcp_connected:
-            try:
-                await self._mcp_client.__aexit__(None, None, None)
-                self._mcp_connected = False
-                logger.info("Disconnected from MCP server")
-            except Exception as e:
-                logger.error(f"Error disconnecting from MCP server: {e}")
 
     async def refresh_tool_descriptions(self) -> None:
-        if not self._mcp_connected:
-            await self.connect_mcp()
+        """Fetch and cache the tool list from the MCP server.
+
+        Safe to call multiple times — each call opens and closes its own
+        HTTP session (StreamableHttpTransport is stateless).
+        """
         if self.tool_registry:
             await self.tool_registry.refresh_tools()
 
@@ -129,6 +105,10 @@ class GraphRuntime:
         return await self._router_node.action(state)
 
     async def orchestrator_node(self, state: AssistantState) -> dict[str, Any]:
+        # Refresh tools if the cache is empty (e.g. MCP was down at startup).
+        if self.tool_registry and self.tool_registry.is_empty:
+            logger.warning("Tool cache is empty, refreshing before orchestration")
+            await self.refresh_tool_descriptions()
         return await self._orchestrator_node.action(state)
 
     async def tool_executor_node(self, state: AssistantState) -> dict[str, Any]:
