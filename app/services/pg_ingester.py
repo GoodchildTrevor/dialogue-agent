@@ -117,31 +117,17 @@ class IngesterService:
         message_ids: Sequence[uuid.UUID],
         vectors: Sequence[list[float]],
     ) -> int:
-        """Bulk UPDATE via UPDATE ... FROM (VALUES ...) — one statement per batch."""
         updated = 0
         for batch in chunked(zip(message_ids, vectors), self._insert_batch_size):
             batch = list(batch)
-            placeholders = ", ".join(
-                f"(:id_{i}::uuid, :vec_{i}::vector)"
-                for i in range(len(batch))
-            )
-            params: dict = {}
-            for i, (msg_id, vec) in enumerate(batch):
-                params[f"id_{i}"] = str(msg_id)
-                params[f"vec_{i}"] = "[" + ",".join(str(v) for v in vec) + "]"
-
-            stmt = text(
-                f"""
-                UPDATE messages
-                SET embedding = v.embedding
-                FROM (VALUES {placeholders}) AS v(id, embedding)
-                WHERE messages.id = v.id
-                """
-            )
-            await session.execute(stmt, params)
+            for msg_id, vec in batch:
+                vec_str = "[" + ",".join(str(v) for v in vec) + "]"
+                stmt = text(
+                    "UPDATE messages SET embedding = CAST(:vec AS vector) WHERE id = CAST(:id AS uuid)"
+                )
+                await session.execute(stmt, {"id": str(msg_id), "vec": vec_str})
             await session.commit()
             updated += len(batch)
-            logger.debug("Saved embedding batch of %d", len(batch))
 
         logger.info("Updated embeddings for %d messages", updated)
         return updated
