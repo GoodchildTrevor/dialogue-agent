@@ -1,4 +1,5 @@
 import hashlib
+import logging
 from typing import Any
 
 from app.core.tracing import trace
@@ -9,6 +10,8 @@ from app.graph.utils import (
     _parse_json_object,
     _router_fallback
 )
+
+logger = logging.getLogger(__name__)
 
 
 class RouterNode():    
@@ -50,9 +53,18 @@ class RouterNode():
             else:
                 t.route_decision = "orchestrator"
 
+        logger.info(
+            "[%s] router: route=%s is_simple=%s needs_tools=%s is_complex=%s needs_reasoning=%s",
+            state["request_id"],
+            t.route_decision,
+            update.get("is_simple"),
+            update.get("needs_tools"),
+            update.get("is_complex_task"),
+            update.get("needs_reasoning_model"),
+        )
+
         if update.get("is_simple") and update.get("answer"):
             return {"final_answer": str(update["answer"]), "next_action": "end"}
         if update.get("needs_reasoning_model") or update.get("is_complex_task"):
             return {"is_complex_task": True, "next_action": "reasoning"}
         return {"is_complex_task": bool(update.get("is_complex_task", False)), "next_action": "orchestrator"}
-    

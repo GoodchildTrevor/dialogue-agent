@@ -9,6 +9,9 @@ from sqlalchemy import ARRAY, DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
+# Qwen3-Embedding-0.6B output dimension
+_EMBEDDING_DIM = 1024
+
 
 class Base(DeclarativeBase):
     pass
@@ -52,7 +55,7 @@ class Message(Base):
         UUID(as_uuid=True), ForeignKey("files.id", ondelete="SET NULL"), nullable=True, index=True
     )
     metadata_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
-    embedding: Mapped[list[float] | None] = mapped_column(Vector(), nullable=True)
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(_EMBEDDING_DIM), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
 
     file: Mapped["File | None"] = relationship(back_populates="messages", lazy="select")

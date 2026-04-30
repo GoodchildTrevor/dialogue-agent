@@ -80,6 +80,15 @@ class OrchestratorNode:
             t.output = parsed
 
         action = parsed.get("action")
+        tool_names = [c.get("tool") for c in parsed.get("tool_calls", [])] if action == "tools" else []
+        log.info(
+            "[%s] orchestrator: action=%s tools=%s retry=%d",
+            state["request_id"],
+            action,
+            tool_names,
+            state.get("tool_retry_count", 0),
+        )
+
         if action == "respond":
             return {"final_answer": str(parsed.get("answer", "")), "next_action": "end"}
         if action == "tools":
