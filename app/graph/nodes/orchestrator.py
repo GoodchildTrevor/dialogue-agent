@@ -1,7 +1,7 @@
 import json
 import logging
 from typing import Any
-
+from mcp.types import TextContent  # добавь импорт
 from app.core.tracing import trace
 from app.graph.prompt_fragments import ORCHESTRATOR_SYSTEM_PROMPT
 from app.graph.state import AssistantState
@@ -13,6 +13,16 @@ from app.graph.utils import (
 )
 
 log = logging.getLogger(__name__)
+
+
+def _make_serializable(obj: Any) -> Any:
+    if isinstance(obj, TextContent):
+        return obj.text
+    if isinstance(obj, list):
+        return [_make_serializable(i) for i in obj]
+    if isinstance(obj, dict):
+        return {k: _make_serializable(v) for k, v in obj.items()}
+    return obj
 
 
 class OrchestratorNode:
@@ -27,7 +37,6 @@ class OrchestratorNode:
         user_message = state["messages"][-1]["content"]
         user_id = state["user_id"]
 
-        # Always enrich context with semantically relevant past messages.
         matches: list[dict[str, Any]] = []
         try:
             matches = await self.history_service.search(
@@ -67,7 +76,7 @@ class OrchestratorNode:
                 model=self.settings.ROUTER_MODEL,
                 messages=[
                     {"role": "system", "content": system_message},
-                    {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+                    {"role": "user", "content": json.dumps(_make_serializable(payload), ensure_ascii=False)},
                 ],
                 format="json",
             )
