@@ -12,7 +12,7 @@ from fastapi.security import APIKeyHeader
 
 from app.api.schemas import ChatRequest, ChatResponse
 from app.core.config import Settings
-from app.graph.utils import GraphRuntime
+from app.graph.graph_runtime import GraphRuntime
 
 router = APIRouter()
 logger = logging.getLogger(__name__)

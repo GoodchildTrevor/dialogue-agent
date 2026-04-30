@@ -13,6 +13,7 @@ class Settings(BaseSettings):
 
     APP_NAME: str = "dialogue-bot"
     API_V1_PREFIX: str = "/api/v1"
+    API_KEY: str
     LOG_LEVEL: str = "INFO"
 
     LLM_BASE_URL: str
@@ -37,7 +38,6 @@ class Settings(BaseSettings):
     TOOL_REQUEST_TIMEOUT_SECONDS: float = 45.0
     HTTP_MAX_CONNECTIONS: int = 100
     HISTORY_SEARCH_LIMIT: int = 5
-    API_KEY: str = "default-secret-key-change-me"
 
 
 def get_settings() -> Settings:

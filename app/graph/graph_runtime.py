@@ -41,6 +41,11 @@ class GraphRuntime:
     history_service: HistoryService = field(init=False)
     graph: Any = field(init=False)
 
+    _router_node: RouterNode = field(init=False)
+    _orchestrator_node: OrchestratorNode = field(init=False)
+    _tool_executor_node: ToolExecutorNode = field(init=False)
+    _strong_model_node: StrongModelNode = field(init=False)
+
     def __post_init__(self) -> None:
         transport = StreamableHttpTransport(
             self.settings.MCP_SERVER_URL,
@@ -50,7 +55,7 @@ class GraphRuntime:
         self.tool_registry = ToolRegistry(self.settings, self._mcp_client)
         self.chunker_service = ChunkerServiceClient(
             base_url=self.settings.CHUNKER_SERVICE_URL,
-            timeout_seconds=self.settings.TOOL_REQUEST_TIMEOUT_SECONDS,
+            timeout=self.settings.TOOL_REQUEST_TIMEOUT_SECONDS,
         )
         # IngesterService must be created before HistoryService
         # (HistoryService reuses its embedding model)
