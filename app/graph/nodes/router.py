@@ -6,7 +6,7 @@ from app.core.tracing import trace
 from app.graph.prompt_fragments import ROUTER_SYSTEM_PROMPT
 from app.graph.state import AssistantState
 from app.graph.utils import (
-    _extract_token_estimate, 
+    _extract_token_estimate,
     _parse_json_object,
     _router_fallback
 )
@@ -14,11 +14,11 @@ from app.graph.utils import (
 logger = logging.getLogger(__name__)
 
 
-class RouterNode():    
+class RouterNode():
     def __init__(self, llm_client, settings):
         self.llm_client = llm_client
         self.settings = settings
-        
+
     async def action(self, state: AssistantState) -> dict[str, Any]:
         user_message = state["messages"][-1]["content"]
         payload = {"message": user_message}
@@ -44,10 +44,15 @@ class RouterNode():
             parsed = _parse_json_object(content)
             update = _router_fallback(user_message) if parsed is None else parsed
             t.output = update
+
+            # Routing logic:
+            # - is_simple: answer immediately, no tools needed
+            # - needs_tools / needs_reasoning_model / is_complex_task:
+            #   ALL go through the orchestrator first so it can call tools.
+            #   The orchestrator will escalate to reasoning if it decides to.
+            #   Never skip the orchestrator — otherwise tool calls are impossible.
             if update.get("is_simple") and update.get("answer"):
                 t.route_decision = "simple"
-            elif update.get("needs_reasoning_model") or update.get("is_complex_task"):
-                t.route_decision = "reasoning"
             elif parsed is None:
                 t.route_decision = "fallback"
             else:
@@ -65,6 +70,10 @@ class RouterNode():
 
         if update.get("is_simple") and update.get("answer"):
             return {"final_answer": str(update["answer"]), "next_action": "end"}
-        if update.get("needs_reasoning_model") or update.get("is_complex_task"):
-            return {"is_complex_task": True, "next_action": "reasoning"}
-        return {"is_complex_task": bool(update.get("is_complex_task", False)), "next_action": "orchestrator"}
+
+        # Everything else — tools, complex tasks, reasoning hints — goes to orchestrator.
+        # The orchestrator will call `escalate` if it needs the strong model.
+        return {
+            "is_complex_task": bool(update.get("is_complex_task", False)),
+            "next_action": "orchestrator",
+        }
