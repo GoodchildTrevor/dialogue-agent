@@ -1,8 +1,8 @@
 import json
 import logging
 from typing import Any
-from mcp.types import TextContent  # добавь импорт
-from app.core.tracing import trace
+from mcp.types import TextContent
+from app.core.tracing import _make_json_safe, trace
 from app.graph.prompt_fragments import ORCHESTRATOR_SYSTEM_PROMPT
 from app.graph.state import AssistantState
 from app.graph.tool_registry import ToolRegistry
@@ -15,15 +15,13 @@ from app.graph.utils import (
 
 log = logging.getLogger(__name__)
 
+# How many recent messages (besides the current one) to include directly in the payload
+_RECENT_MESSAGES_WINDOW = 10
+
 
 def _make_serializable(obj: Any) -> Any:
-    if isinstance(obj, TextContent):
-        return obj.text
-    if isinstance(obj, list):
-        return [_make_serializable(i) for i in obj]
-    if isinstance(obj, dict):
-        return {k: _make_serializable(v) for k, v in obj.items()}
-    return obj
+    """Backward-compat shim — delegates to the shared helper in tracing."""
+    return _make_json_safe(obj)
 
 
 class OrchestratorNode:
@@ -31,7 +29,6 @@ class OrchestratorNode:
     def __init__(self, llm_client, settings, tool_registries: list[ToolRegistry], history_service):
         self.llm_client = llm_client
         self.tool_registries = tool_registries
-        # Keep backward-compat reference to the primary registry
         self.tool_registry = tool_registries[0] if tool_registries else None
         self.settings = settings
         self.history_service = history_service
@@ -43,9 +40,11 @@ class OrchestratorNode:
         return result
 
     async def action(self, state: AssistantState) -> dict[str, Any]:
-        user_message = state["messages"][-1]["content"]
+        messages: list[dict] = state["messages"]
+        user_message = messages[-1]["content"]
         user_id = state["user_id"]
 
+        # --- RAG-based history for system prompt ---
         matches: list[dict[str, Any]] = []
         try:
             matches = await self.history_service.search(
@@ -60,8 +59,17 @@ class OrchestratorNode:
             ORCHESTRATOR_SYSTEM_PROMPT, matches, self.settings
         )
 
+        # --- Recent conversation window passed directly to the model ---
+        # Include up to _RECENT_MESSAGES_WINDOW messages BEFORE the current one so the
+        # model can resolve references like "save that" or "use the result above".
+        recent_messages = [
+            {"role": m["role"], "content": str(m["content"])}
+            for m in messages[-(  _RECENT_MESSAGES_WINDOW + 1):-1]
+        ]
+
         payload = {
             "message": user_message,
+            "recent_messages": recent_messages,
             "context": state.get("context", {}),
             "intermediate_steps": state.get("intermediate_steps", []),
             "tool_retry_count": state.get("tool_retry_count", 0),
