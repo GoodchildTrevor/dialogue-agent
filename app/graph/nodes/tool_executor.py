@@ -4,16 +4,25 @@ from typing import Any
 
 from app.core.tracing import trace
 from app.graph.state import AssistantState
-from app.graph.tool_registry import ToolContext
+from app.graph.tool_registry import ToolContext, ToolRegistry
 
 logger = logging.getLogger(__name__)
 
 
-class ToolExecutorNode():    
-    def __init__(self, emit_status, settings, tool_registry,):
+class ToolExecutorNode():
+    def __init__(self, emit_status, settings, tool_registries: list[ToolRegistry]):
         self.emit_status = emit_status
-        self.tool_registry = tool_registry 
+        self.tool_registries = tool_registries
+        # Keep backward-compat reference to the primary registry
+        self.tool_registry = tool_registries[0] if tool_registries else None
         self.settings = settings
+
+    def _find_registry(self, tool_name: str) -> ToolRegistry | None:
+        """Return the first registry that knows about this tool."""
+        for registry in self.tool_registries:
+            if registry.has_tool(tool_name):
+                return registry
+        return None
 
     async def action(self, state: AssistantState) -> dict[str, Any]:
         tool_calls = state.get("pending_tool_calls", [])
@@ -24,11 +33,17 @@ class ToolExecutorNode():
                 state=state,
                 emit_status=lambda s: self.emit_status(state, s),
             )
+
+            async def _invoke_one(call: dict[str, Any]):
+                tool_name = call["tool"]
+                registry = self._find_registry(tool_name)
+                if registry is None:
+                    # Fall back to primary registry so it can return a proper "unknown tool" error
+                    registry = self.tool_registries[0]
+                return await registry.invoke(tool_name, call.get("arguments", {}), tool_context)
+
             results = await asyncio.gather(
-                *(
-                    self.tool_registry.invoke(call["tool"], call.get("arguments", {}), tool_context)
-                    for call in tool_calls
-                ),
+                *(_invoke_one(call) for call in tool_calls),
                 return_exceptions=True,
             )
             # Normalize exceptions into tool-like error dicts so the rest of the flow can handle them

@@ -32,7 +32,9 @@ class GraphRuntime:
     settings: Settings
     llm_client: LLMClient
     _mcp_client: MCPClient | None = field(default=None, init=False)
+    _file_converter_client: MCPClient | None = field(default=None, init=False)
     tool_registry: ToolRegistry | None = field(default=None, init=False)
+    file_converter_registry: ToolRegistry | None = field(default=None, init=False)
     chunker_service: ChunkerServiceClient = field(init=False)
     pg_ingester: IngesterService = field(init=False)
     history_service: HistoryService = field(init=False)
@@ -50,6 +52,18 @@ class GraphRuntime:
         )
         self._mcp_client = MCPClient(transport)
         self.tool_registry = ToolRegistry(self.settings, self._mcp_client)
+
+        registries: list[ToolRegistry] = [self.tool_registry]
+
+        if self.settings.FILE_CONVERTER_MCP_URL:
+            transport2 = StreamableHttpTransport(
+                self.settings.FILE_CONVERTER_MCP_URL,
+                headers={"Authorization": f"Bearer {self.settings.FILE_CONVERTER_AUTH_TOKEN}"},
+            )
+            self._file_converter_client = MCPClient(transport2)
+            self.file_converter_registry = ToolRegistry(self.settings, self._file_converter_client)
+            registries.append(self.file_converter_registry)
+        
         self.chunker_service = ChunkerServiceClient(
             base_url=self.settings.CHUNKER_SERVICE_URL,
             timeout=self.settings.TOOL_REQUEST_TIMEOUT_SECONDS,
@@ -61,23 +75,21 @@ class GraphRuntime:
         self._orchestrator_node = OrchestratorNode(
             self.llm_client,
             self.settings,
-            self.tool_registry,
+            registries,
             self.history_service,
         )
         self._tool_executor_node = ToolExecutorNode(
-            self.emit_status, self.settings, self.tool_registry
+            self.emit_status, self.settings, registries
         )
         self._strong_model_node = StrongModelNode(self.llm_client, self.settings)
         self.graph = self._build_graph()
 
     async def refresh_tool_descriptions(self) -> None:
-        """Fetch and cache the tool list from the MCP server.
-
-        Safe to call multiple times — each call opens and closes its own
-        HTTP session (StreamableHttpTransport is stateless).
-        """
+        """Fetch and cache the tool list from all MCP servers."""
         if self.tool_registry:
             await self.tool_registry.refresh_tools()
+        if self.file_converter_registry:
+            await self.file_converter_registry.refresh_tools()
 
     def build_initial_state(
         self,
@@ -105,7 +117,6 @@ class GraphRuntime:
         return await self._router_node.action(state)
 
     async def orchestrator_node(self, state: AssistantState) -> dict[str, Any]:
-        # Refresh tools if the cache is empty (e.g. MCP was down at startup).
         if self.tool_registry and self.tool_registry.is_empty:
             logger.warning("Tool cache is empty, refreshing before orchestration")
             await self.refresh_tool_descriptions()
