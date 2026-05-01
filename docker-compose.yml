@@ -59,31 +59,6 @@ services:
       retries: 5
     restart: unless-stopped
 
-  file-converter-mcp:
-    build:
-      context: ../file-converter-mcp
-      dockerfile: Dockerfile
-    env_file:
-      - ../file-converter-mcp/.env
-    ports:
-      - "8002:8000"
-    volumes:
-      - export-data:/output
-    restart: unless-stopped
-
-  file-export-server:
-    build:
-      context: ../file-converter-mcp
-      dockerfile: file_server/dockerfile.server
-    environment:
-      - FILE_EXPORT_DIR=/output
-    ports:
-      - "9003:9003"
-    volumes:
-      - export-data:/output
-    restart: unless-stopped
-
 volumes:
   postgres_data:
   file_storage:
-  export-data:
