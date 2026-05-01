@@ -13,18 +13,39 @@ from app.db.session import get_session_maker
 logger = logging.getLogger(__name__)
 
 
+def _make_json_safe(obj: Any) -> Any:
+    """Recursively convert any non-JSON-serializable objects to plain Python types.
+
+    Handles mcp.types.TextContent, lists, dicts, and anything else by
+    falling back to str().
+    """
+    if obj is None or isinstance(obj, (bool, int, float, str)):
+        return obj
+    if isinstance(obj, dict):
+        return {k: _make_json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_make_json_safe(i) for i in obj]
+    # mcp TextContent / ImageContent / EmbeddedResource — all have .text or .model_dump
+    if hasattr(obj, "model_dump"):
+        return _make_json_safe(obj.model_dump())
+    if hasattr(obj, "text"):
+        return obj.text
+    return str(obj)
+
+
 def _safe_payload(value: Any) -> dict[str, Any] | None:
     if value is None:
         return None
-    if isinstance(value, dict):
-        return value
-    return {"value": value}
+    safe = _make_json_safe(value)
+    if isinstance(safe, dict):
+        return safe
+    return {"value": safe}
 
 
 def _safe_text(value: Any) -> str | None:
     if value is None:
         return None
-    text = str(value)
+    text = str(_make_json_safe(value))
     return text[:4000]
 
 
