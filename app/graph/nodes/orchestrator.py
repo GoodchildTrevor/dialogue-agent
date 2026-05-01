@@ -5,6 +5,7 @@ from mcp.types import TextContent  # добавь импорт
 from app.core.tracing import trace
 from app.graph.prompt_fragments import ORCHESTRATOR_SYSTEM_PROMPT
 from app.graph.state import AssistantState
+from app.graph.tool_registry import ToolRegistry
 from app.graph.utils import (
     _extract_token_estimate,
     _normalize_tool_calls,
@@ -27,11 +28,19 @@ def _make_serializable(obj: Any) -> Any:
 
 class OrchestratorNode:
 
-    def __init__(self, llm_client, settings, tool_registry, history_service):
+    def __init__(self, llm_client, settings, tool_registries: list[ToolRegistry], history_service):
         self.llm_client = llm_client
-        self.tool_registry = tool_registry
+        self.tool_registries = tool_registries
+        # Keep backward-compat reference to the primary registry
+        self.tool_registry = tool_registries[0] if tool_registries else None
         self.settings = settings
         self.history_service = history_service
+
+    def _all_tool_descriptions(self) -> list[dict[str, Any]]:
+        result = []
+        for registry in self.tool_registries:
+            result.extend(registry.describe_for_model())
+        return result
 
     async def action(self, state: AssistantState) -> dict[str, Any]:
         user_message = state["messages"][-1]["content"]
@@ -65,7 +74,7 @@ class OrchestratorNode:
             input=payload,
         ) as t:
             tool_descriptions = json.dumps(
-                self.tool_registry.describe_for_model() if self.tool_registry else [],
+                self._all_tool_descriptions(),
                 ensure_ascii=False,
             )
             system_message = (

@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     MCP_SERVER_URL: str
     MCP_AUTH_TOKEN: str
 
+    FILE_CONVERTER_MCP_URL: str = ""
+    FILE_CONVERTER_AUTH_TOKEN: str = ""
+
     POSTGRES_URL: str
 
     CHUNKER_SERVICE_URL: str

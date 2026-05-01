@@ -12,6 +12,7 @@ services:
     depends_on:
       - postgres
       - pg-vector-ingester
+      - file-converter-mcp
     volumes:
       - file_storage:/app/storage
     extra_hosts:
