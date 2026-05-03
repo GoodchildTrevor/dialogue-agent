@@ -1,3 +1,27 @@
+"""Graph runtime module for the assistant agent orchestration.
+
+This module provides the :class:`GraphRuntime` class which orchestrates
+the agent workflow using LangGraph. It manages MCP client connections,
+tool registries, and the state machine that routes requests through
+router, orchestrator, tool executor, and reasoning nodes.
+
+Example:
+    Basic usage::
+
+        settings = Settings()
+        llm_client = LLMClient(settings)
+        runtime = GraphRuntime(settings, llm_client)
+        await runtime.startup()
+        try:
+            state = runtime.build_initial_state(
+                user_id="user_1",
+                message="Hello",
+                request_id="req_123",
+            )
+            result = await runtime.run(state)
+        finally:
+            await runtime.shutdown()
+"""
 from __future__ import annotations
 
 import asyncio
@@ -29,6 +53,38 @@ logger = logging.getLogger(__name__)
 
 @dataclass(slots=True)
 class GraphRuntime:
+
+    """Core runtime orchestrator for the assistant agent.
+
+    Manages the full lifecycle of the agent workflow, including MCP client
+    initialization, tool registry management, node instantiation, and
+    LangGraph state machine construction.
+
+    The runtime coordinates four primary nodes:
+
+    - **router** -- determines the initial flow based on the user input
+    - **orchestrator** -- plans tool calls and delegates to tools
+    - **tools** -- executes tool calls and collects results
+    - **reasoning** -- performs deep reasoning via a strong LLM model
+
+    :param settings: Application configuration from :class:`Settings`
+    :param llm_client: Client for interacting with the LLM backend
+
+    :ivar settings: The application settings instance
+    :ivar llm_client: The LLM client instance
+    :ivar _mcp_client: MCP client for the primary tool server. Lazily initialized.
+    :ivar _file_converter_client: MCP client for the file converter server. ``None`` if not configured.
+    :ivar tool_registry: Registry of available tools from the primary MCP server.
+    :ivar file_converter_registry: Registry of file conversion tools. ``None`` if not configured.
+    :ivar chunker_service: Client for the chunking service API.
+    :ivar pg_ingester: Client for the PostgreSQL ingester service.
+    :ivar history_service: Service for managing conversation history.
+    :ivar graph: The compiled LangGraph state machine.
+    :ivar _router_node: Internal router node instance.
+    :ivar _orchestrator_node: Internal orchestrator node instance.
+    :ivar _tool_executor_node: Internal tool executor node instance.
+    :ivar _strong_model_node: Internal strong model (reasoning) node instance.
+    """
     settings: Settings
     llm_client: LLMClient
     _mcp_client: MCPClient | None = field(default=None, init=False)
@@ -46,6 +102,12 @@ class GraphRuntime:
     _strong_model_node: StrongModelNode = field(init=False)
 
     def __post_init__(self) -> None:
+        """Initialize clients, registries, nodes, and compile the graph.
+
+        Sets up the MCP transport and client, optionally connects to the
+        file converter MCP server, instantiates service clients and all
+        graph nodes, then builds and compiles the LangGraph state machine.
+        """
         transport = StreamableHttpTransport(
             self.settings.MCP_SERVER_URL,
             headers={"Authorization": f"Bearer {self.settings.MCP_AUTH_TOKEN}"},
@@ -83,7 +145,7 @@ class GraphRuntime:
         )
         self._strong_model_node = StrongModelNode(self.llm_client, self.settings)
         self.graph = self._build_graph()
-    
+
     async def startup(self) -> None:
         await self.tool_registry.startup()
         if self.file_converter_registry:
@@ -167,3 +229,4 @@ class GraphRuntime:
         )
         graph.add_edge("reasoning", END)
         return graph.compile()
+    
