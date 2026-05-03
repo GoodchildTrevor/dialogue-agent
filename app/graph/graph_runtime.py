@@ -83,6 +83,16 @@ class GraphRuntime:
         )
         self._strong_model_node = StrongModelNode(self.llm_client, self.settings)
         self.graph = self._build_graph()
+    
+    async def startup(self) -> None:
+        await self.tool_registry.startup()
+        if self.file_converter_registry:
+            await self.file_converter_registry.startup()
+
+    async def shutdown(self) -> None:
+        await self.tool_registry.shutdown()
+        if self.file_converter_registry:
+            await self.file_converter_registry.shutdown()
 
     async def refresh_tool_descriptions(self) -> None:
         """Fetch and cache the tool list from all MCP servers."""
