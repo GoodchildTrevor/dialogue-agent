@@ -17,13 +17,11 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     settings = get_settings()
     app.state.settings = settings
-    app.title = settings.APP_NAME
-
     llm = LLMClient(settings)
     runtime = GraphRuntime(settings=settings, llm_client=llm)
 
-    # Pre-warm the tool cache. If MCP is unavailable the warning is logged
-    # and the orchestrator will retry on the first real request.
+    await runtime.startup()
+
     try:
         await runtime.refresh_tool_descriptions()
     except Exception as e:
@@ -34,8 +32,7 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # No persistent MCP connection to close — StreamableHttpTransport is
-    # stateless and each call manages its own session.
+    await runtime.shutdown()
     await llm.aclose()
 
 
