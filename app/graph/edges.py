@@ -44,3 +44,18 @@ def after_tools(state: AssistantState) -> str:
         state.get("tool_retry_count", 0),
     )
     return destination
+
+
+def after_reasoning(state: AssistantState) -> str:
+    if state.get("final_answer"):
+        destination = "end"
+    else:
+        destination = state.get("next_action", "end")
+    log.debug(
+        "[%s] after_reasoning -> %s (final_answer=%r, next_action=%r)",
+        state.get("request_id", "?"),
+        destination,
+        bool(state.get("final_answer")),
+        state.get("next_action"),
+    )
+    return destination

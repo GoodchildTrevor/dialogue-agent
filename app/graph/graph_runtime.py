@@ -35,7 +35,7 @@ from langgraph.graph import END, START, StateGraph
 
 from app.core.config import Settings
 from app.core.llm_client import LLMClient
-from app.graph.edges import after_orchestrator, after_router, after_tools
+from app.graph.edges import after_orchestrator, after_reasoning, after_router, after_tools
 from app.graph.state import AssistantState
 from app.graph.tool_registry import ToolRegistry
 
@@ -143,7 +143,7 @@ class GraphRuntime:
         self._tool_executor_node = ToolExecutorNode(
             self.emit_status, self.settings, registries
         )
-        self._strong_model_node = StrongModelNode(self.llm_client, self.settings)
+        self._strong_model_node = StrongModelNode(self.llm_client, self.settings, registries)
         self.graph = self._build_graph()
 
     async def startup(self) -> None:
@@ -229,5 +229,9 @@ class GraphRuntime:
             after_tools,
             {"orchestrator": "orchestrator", "reasoning": "reasoning"},
         )
-        graph.add_edge("reasoning", END)
+        graph.add_conditional_edges(
+            "reasoning",
+            after_reasoning,
+            {"end": END, "tools": "tools"},
+        )
         return graph.compile()
