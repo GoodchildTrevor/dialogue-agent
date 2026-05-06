@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import logging.config
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -13,9 +14,24 @@ from app.graph.graph_runtime import GraphRuntime
 logger = logging.getLogger(__name__)
 
 
+def _configure_logging(level: str) -> None:
+    numeric = getattr(logging, level.upper(), logging.INFO)
+    logging.basicConfig(
+        level=numeric,
+        format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
+        datefmt="%Y-%m-%dT%H:%M:%S",
+        force=True,
+    )
+    # Keep third-party loggers quieter so our app logs stand out
+    for noisy in ("httpx", "httpcore", "uvicorn.access", "fastmcp", "mcp"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
+    _configure_logging(settings.LOG_LEVEL)
+
     app.state.settings = settings
     llm = LLMClient(settings)
     runtime = GraphRuntime(settings=settings, llm_client=llm)
