@@ -178,6 +178,8 @@ class ToolRegistry:
             if context.emit_status:
                 await context.emit_status(f"Calling tool: {tool_name}")
 
+            logger.debug("Invoking tool %s with arguments: %r", tool_name, arguments)
+
             result = await self._mcp_client.call_tool(tool_name, arguments=arguments)
 
             if isinstance(result, dict):

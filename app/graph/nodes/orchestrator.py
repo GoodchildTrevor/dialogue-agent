@@ -45,13 +45,13 @@ def _normalize_tool_calls(raw: Any) -> list[dict]:
             if tool:
                 result.append({
                     "tool": str(tool),
-                    "args": args if isinstance(args, dict) else {}
+                    "arguments": args if isinstance(args, dict) else {}
                 })
 
         elif isinstance(item, str):
             result.append({
                 "tool": item,
-                "args": {}
+                "arguments": {}
             })
 
     return result
