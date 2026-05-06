@@ -43,7 +43,6 @@ def _normalize_tool_calls(raw: Any) -> list[dict]:
     """Normalise tool_calls regardless of which JSON schema the LLM used."""
     raw = _safe_json_loads(raw)
 
-    # Handle single tool dict: {"name": ..., "arguments": ...}
     if isinstance(raw, dict):
         name = raw.get("name") or raw.get("tool")
         args = raw.get("arguments") or raw.get("args") or {}
@@ -85,7 +84,6 @@ def _sanitize_llm_output(parsed: Any, fallback_task: str) -> dict:
     if not isinstance(action, str):
         action = str(action) if action is not None else ""
 
-    # OpenAI function-calling compat: {"action": "function", "function": {"name": ..., "arguments": ...}}
     if action == "function":
         fn = parsed.get("function", {})
         if isinstance(fn, dict):
@@ -138,6 +136,32 @@ def _format_intermediate_steps(steps: list[dict[str, Any]]) -> list[dict[str, An
                 formatted_results.append({"ok": True, "tool": r.get("tool", ""), "content": content})
         formatted.append({"tool_calls": calls, "results": formatted_results})
     return formatted
+
+
+def _build_unknown_tool_error_step(
+    unknown_names: list[str],
+    known_tools: list[str],
+) -> dict[str, Any]:
+    """Synthetic intermediate step that tells the model it used a nonexistent tool.
+
+    Returned as a fake completed step so that on the next orchestrator pass
+    the model sees its mistake in last_tool_results and self-corrects.
+    """
+    return {
+        "tool_calls": [{"tool": name, "arguments": {}} for name in unknown_names],
+        "results": [
+            {
+                "ok": False,
+                "tool": name,
+                "error": (
+                    f"Unknown tool '{name}'. "
+                    f"Available tools: {json.dumps(known_tools)}. "
+                    "Retry using only a tool from this list, or use action='respond'."
+                ),
+            }
+            for name in unknown_names
+        ],
+    }
 
 
 class OrchestratorNode:
@@ -221,7 +245,7 @@ class OrchestratorNode:
             system_message = (
                 available_tools_line
                 + f"{system_prompt}\n\n"
-                + f"Available tools (full schema): "
+                + "Available tools (full schema): "
                 + json.dumps(tool_descriptions, ensure_ascii=False)
             )
 
@@ -244,24 +268,34 @@ class OrchestratorNode:
             t.estimated_tokens = _extract_token_estimate(response)
 
             content = response.get("message", {}).get("content", "")
-
             log.debug("[%s] orchestrator raw LLM response: %.500s", state["request_id"], content)
 
             parsed_raw = _parse_json_object(content)
             parsed = _sanitize_llm_output(parsed_raw, user_message)
 
-            # Drop any tool calls referencing unknown tools
-            known_tools = set(tool_names)
-            valid_calls = [tc for tc in parsed["tool_calls"] if tc["tool"] in known_tools]
-            if len(valid_calls) < len(parsed["tool_calls"]):
-                unknown = [tc["tool"] for tc in parsed["tool_calls"] if tc["tool"] not in known_tools]
-                log.warning("[%s] Dropping unknown tool calls: %s", state["request_id"], unknown)
+            # --- Filter unknown tool calls ---
+            known_tools_set = set(tool_names)
+            valid_calls = [tc for tc in parsed["tool_calls"] if tc["tool"] in known_tools_set]
+            unknown_calls = [tc["tool"] for tc in parsed["tool_calls"] if tc["tool"] not in known_tools_set]
+
+            if unknown_calls:
+                log.warning("[%s] Dropping unknown tool calls: %s", state["request_id"], unknown_calls)
+
             parsed["tool_calls"] = valid_calls
 
-            # If all tool calls were dropped but action was tools, escalate
-            if parsed["action"] == "tools" and not parsed["tool_calls"]:
-                log.warning("[%s] All tool calls invalid after filtering — escalating", state["request_id"])
-                parsed["action"] = "escalate"
+            # --- Unknown tools: inject error step back into state so model can self-correct ---
+            if parsed["action"] == "tools" and not valid_calls and unknown_calls:
+                log.warning(
+                    "[%s] All tool calls unknown — injecting error feedback into steps (unknown=%s)",
+                    state["request_id"],
+                    unknown_calls,
+                )
+                error_step = _build_unknown_tool_error_step(unknown_calls, tool_names)
+                t.output = {"action": "tool_name_error", "unknown": unknown_calls}
+                return {
+                    "intermediate_steps": raw_steps + [error_step],
+                    "next_action": "orchestrator",
+                }
 
             t.output = parsed
 
@@ -275,13 +309,13 @@ class OrchestratorNode:
         if parsed["action"] == "respond":
             return {
                 "final_answer": parsed["answer"],
-                "next_action": "end"
+                "next_action": "end",
             }
 
         if parsed["action"] == "tools":
             return {
                 "pending_tool_calls": parsed["tool_calls"],
-                "next_action": "tools"
+                "next_action": "tools",
             }
 
         return self._fallback(state, parsed["task"])
