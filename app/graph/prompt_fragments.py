@@ -110,6 +110,11 @@ When you do need to call a search tool:
 - Only call a search tool a second time if the first result was completely empty or returned
   an explicit error, AND a meaningfully different query would help.
 
+## Document export consideration
+When you have search results that answer the user's question, consider whether the user
+would benefit from having this information saved as a document. If so, you can call the
+`export_text_file` tool to create a document with the relevant information.
+
 ## export_text_file — content format
 When calling export_text_file with format="docx", "pdf", or "pptx", the "text" argument must
 be a FLAT list of content-block dicts. Do NOT wrap it in an outer object or add a "title" key.

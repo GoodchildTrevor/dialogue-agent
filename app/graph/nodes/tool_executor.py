@@ -91,8 +91,6 @@ class ToolExecutorNode():
 
         errors = [result for result in results if not result.get("ok")]
 
-        # NOTE: intermediate_steps uses operator.add reducer in AssistantState,
-        # so we return only the NEW step — LangGraph appends it automatically.
         new_step = {"tool_calls": tool_calls, "results": results}
 
         logger.debug(
@@ -117,4 +115,5 @@ class ToolExecutorNode():
             update["tool_retry_count"] = 0
             update["last_tool_error"] = None
             update["next_action"] = "orchestrator"
+
         return update
