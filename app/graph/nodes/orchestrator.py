@@ -64,6 +64,10 @@ def _sanitize_llm_output(parsed: Any, fallback_task: str) -> dict:
 
     action = parsed.get("action")
 
+    # Guard against LLM returning action as a dict or other non-string type
+    if not isinstance(action, str):
+        action = str(action) if action is not None else ""
+
     if action not in {"respond", "tools", "escalate"}:
         action = "escalate"
 
@@ -78,12 +82,7 @@ def _sanitize_llm_output(parsed: Any, fallback_task: str) -> dict:
 
 
 def _format_intermediate_steps(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Reformat intermediate_steps so LLM receives plain-string tool results.
-
-    Each step contains ``tool_calls`` and ``results``.  The results may hold
-    raw fastmcp objects that survived ``_make_json_safe``; we collapse them to
-    a single ``content`` string here so the model can read them directly.
-    """
+    """Reformat intermediate_steps so LLM receives plain-string tool results."""
     formatted = []
     for step in steps:
         calls = step.get("tool_calls", [])
@@ -103,7 +102,6 @@ def _format_intermediate_steps(steps: list[dict[str, Any]]) -> list[dict[str, An
                     content = raw_result.get("content", "")
                 else:
                     content = str(raw_result)
-                # Ensure content is always a plain string
                 if not isinstance(content, str):
                     content = json.dumps(_make_json_safe(content), ensure_ascii=False)
                 formatted_results.append({"ok": True, "tool": r.get("tool", ""), "content": content})
@@ -154,7 +152,6 @@ class OrchestratorNode:
         raw_steps = state.get("intermediate_steps", [])
         formatted_steps = _format_intermediate_steps(raw_steps)
 
-        # Also expose the last tool results at the top level for easy access
         last_tool_results: list[dict] = []
         if formatted_steps:
             last_tool_results = formatted_steps[-1].get("results", [])
