@@ -8,6 +8,17 @@ from app.graph.tool_registry import ToolContext, ToolRegistry
 
 logger = logging.getLogger(__name__)
 
+_ARG_PREVIEW_LEN = 200   # max chars for argument preview in logs
+_RES_PREVIEW_LEN = 300   # max chars for result preview in logs
+
+
+def _truncate(value: Any, max_len: int) -> str:
+    """Return a compact string representation of *value*, capped at *max_len* chars."""
+    text = str(value)
+    if len(text) > max_len:
+        return text[:max_len] + "…"
+    return text
+
 
 class ToolExecutorNode():
     def __init__(self, emit_status, settings, tool_registries: list[ToolRegistry]):
@@ -49,16 +60,32 @@ class ToolExecutorNode():
             # Normalize exceptions into tool-like error dicts so the rest of the flow can handle them
             normalized_results: list[dict[str, Any]] = []
             for call, r in zip(tool_calls, results):
+                tool_name = call.get("tool", "<unknown>")
+                args_preview = _truncate(call.get("arguments", {}), _ARG_PREVIEW_LEN)
                 if isinstance(r, Exception):
                     logger.error(
-                        "[%s] tool_executor: tool=%s raised %s",
-                        state["request_id"], call.get("tool"), r,
+                        "[%s] tool_executor: tool=%s args=%s raised %s: %s",
+                        state["request_id"],
+                        tool_name,
+                        args_preview,
+                        type(r).__name__,
+                        r,
                     )
                     normalized_results.append({"ok": False, "error": str(r)})
                 else:
+                    ok = r.get("ok")
+                    # Log a short preview of the result so we can tell whether the
+                    # tool returned useful data without printing the entire payload.
+                    result_preview = _truncate(
+                        r.get("result") or r.get("error") or r, _RES_PREVIEW_LEN
+                    )
                     logger.info(
-                        "[%s] tool_executor: tool=%s ok=%s",
-                        state["request_id"], call.get("tool"), r.get("ok"),
+                        "[%s] tool_executor: tool=%s args=%s ok=%s result_preview=%s",
+                        state["request_id"],
+                        tool_name,
+                        args_preview,
+                        ok,
+                        result_preview,
                     )
                     normalized_results.append(r)
             results = normalized_results
