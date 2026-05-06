@@ -99,7 +99,11 @@ def _sanitize_llm_output(parsed: Any, fallback_task: str) -> dict:
         action = "escalate"
 
     if action not in {"respond", "tools", "escalate"}:
-        action = "escalate"
+        raw_tool_calls = parsed.get("tool_calls")
+        if raw_tool_calls:
+            action = "tools"
+        else:
+            action = "escalate"
 
     tool_calls = _normalize_tool_calls(parsed.get("tool_calls"))
 
@@ -296,7 +300,7 @@ class OrchestratorNode:
                 error_step = _build_unknown_tool_error_step(unknown_calls, tool_names)
                 t.output = {"action": "tool_name_error", "unknown": unknown_calls}
                 return {
-                    "intermediate_steps": raw_steps + [error_step],
+                    "intermediate_steps": [error_step],  # operator.add сам добавит к существующим
                     "next_action": "orchestrator",
                 }
 
