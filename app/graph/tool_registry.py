@@ -30,6 +30,39 @@ class ToolContext:
     emit_status: Callable[[str], Awaitable[None]] | None = None
 
 
+def _normalize_content(content: Any) -> str:
+    """Normalise MCP tool output to a plain string.
+
+    fastmcp may return content as a list of TextContent objects, a single
+    object with a ``text`` attribute, a plain string, or a dict.  This
+    helper collapses all of those shapes into a single UTF-8 string so the
+    orchestrator LLM always receives something it can read.
+
+    :param content: Raw content returned by the MCP client.
+    :returns: A string representation of the content.
+    """
+    if isinstance(content, str):
+        return content
+
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, dict):
+                parts.append(item.get("text", str(item)))
+            else:
+                parts.append(getattr(item, "text", str(item)))
+        return "\n".join(parts)
+
+    if isinstance(content, dict):
+        return content.get("text", str(content))
+
+    text = getattr(content, "text", None)
+    if text is not None:
+        return str(text)
+
+    return str(content)
+
+
 class ToolRegistry:
     """Registry for MCP tools with invocation and description capabilities.
 
@@ -154,17 +187,18 @@ class ToolRegistry:
 
         If the tool is not registered a failure result is returned without
         contacting the MCP server. On success the tool output is normalised
-        into a consistent structure regardless of whether the MCP client
-        returns a dict or an attribute-based object.
+        into a plain string so the orchestrator LLM can always read it,
+        regardless of the raw shape returned by the MCP client (list of
+        TextContent objects, a single object, a plain string, or a dict).
 
         :param tool_name: Identifier of the tool to invoke.
         :param arguments: Key-value pairs passed as input to the tool.
         :param context: Context object carrying user info, session state,
             and an optional status emitter.
         :returns: A dictionary describing the outcome of the invocation.
-            On success the ``ok`` key is ``True`` and ``result`` holds the
-            tool output. On failure ``ok`` is ``False`` and ``error``
-            contains a ``message`` describing the problem.
+            On success the ``ok`` key is ``True`` and ``result`` holds
+            ``{"content": <str>}``.  On failure ``ok`` is ``False`` and
+            ``error`` contains a ``message`` describing the problem.
         """
         if tool_name not in self._tools:
             logger.warning("Unknown tool requested: %s", tool_name)
@@ -180,17 +214,24 @@ class ToolRegistry:
 
             logger.debug("Invoking tool %s with arguments: %r", tool_name, arguments)
 
-            result = await self._mcp_client.call_tool(tool_name, arguments=arguments)
+            raw = await self._mcp_client.call_tool(tool_name, arguments=arguments)
 
-            if isinstance(result, dict):
-                content = result.get("content", result)
+            # Extract the raw content field from whatever the MCP client returned.
+            if isinstance(raw, dict):
+                raw_content = raw.get("content", raw)
             else:
-                content = getattr(result, "content", result)
+                raw_content = getattr(raw, "content", raw)
+
+            # Collapse all possible content shapes into a plain UTF-8 string so
+            # the orchestrator LLM always receives something it can read directly.
+            content: str = _normalize_content(raw_content)
+
+            logger.debug("Tool %s result (preview): %.300s", tool_name, content)
 
             return {
                 "tool": tool_name,
                 "ok": True,
-                "result": {"content": content} if not isinstance(content, dict) else content,
+                "result": {"content": content},
             }
 
         except Exception as e:
@@ -200,4 +241,3 @@ class ToolRegistry:
                 "ok": False,
                 "error": {"message": str(e)},
             }
-        
