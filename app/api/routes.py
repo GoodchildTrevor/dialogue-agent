@@ -65,6 +65,26 @@ async def _save_and_embed(
 
 
 # ---------------------------------------------------------------------------
+# SSE helpers
+# ---------------------------------------------------------------------------
+
+# Headers that prevent nginx / any intermediary proxy from buffering the stream.
+_SSE_HEADERS = {
+    "Cache-Control": "no-cache",
+    "X-Accel-Buffering": "no",
+}
+
+
+def _sse(payload: dict) -> str:
+    """Encode *payload* as a plain SSE data frame (no event name).
+
+    Plain ``data:`` frames are visible to *all* EventSource listeners and
+    ``curl -N`` without any event-type filter.
+    """
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+# ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
 
@@ -120,12 +140,15 @@ async def stream(
     async def event_stream() -> AsyncGenerator[str, None]:
         task = asyncio.create_task(runtime.run(initial_state))
         try:
+            # Drain the status queue in real-time while the graph runs.
+            # Each status message is flushed immediately as a plain SSE data
+            # frame so the client sees it without any buffering.
             while True:
                 if task.done() and queue.empty():
                     break
                 try:
                     status = await asyncio.wait_for(queue.get(), timeout=0.2)
-                    yield f"event: status\ndata: {json.dumps({'message': status}, ensure_ascii=False)}\n\n"
+                    yield _sse({"status": status})
                 except asyncio.TimeoutError:
                     if task.done():
                         break
@@ -143,12 +166,16 @@ async def stream(
                 )
             )
 
-            for token in answer.split():
-                yield f"event: token\ndata: {json.dumps({'token': token + ' '}, ensure_ascii=False)}\n\n"
-            yield f"event: done\ndata: {json.dumps({'answer': answer}, ensure_ascii=False)}\n\n"
+            # Final answer frame followed by the SSE stream sentinel.
+            yield _sse({"answer": answer})
+            yield "data: [DONE]\n\n"
 
         except Exception as exc:
-            logger.error("Stream error", exc_info=exc)
-            yield f"event: error\ndata: {json.dumps({'message': 'Internal server error'}, ensure_ascii=False)}\n\n"
+            logger.error("Stream error [%s]", request_id, exc_info=exc)
+            yield _sse({"error": "Internal server error"})
 
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers=_SSE_HEADERS,
+    )
