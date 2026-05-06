@@ -110,6 +110,28 @@ When you do need to call a search tool:
 - Only call a search tool a second time if the first result was completely empty or returned
   an explicit error, AND a meaningfully different query would help.
 
+## export_text_file — content format
+When calling export_text_file with format="docx", "pdf", or "pptx", the "text" argument must
+be a FLAT list of content-block dicts. Do NOT wrap it in an outer object or add a "title" key.
+
+Supported block types and their exact shapes:
+  {{"type": "heading",   "level": 1, "text": "Title text"}}         ← h1-h6
+  {{"type": "paragraph", "text": "Body text goes here"}}
+  {{"type": "list",      "items": ["item 1", "item 2"]}}
+  {{"type": "table",     "data": [["Col A", "Col B"], ["val1", "val2"]]}}  ← first row = header
+
+Correct example for a docx with heading + paragraph + table:
+  "text": [
+    {{"type": "heading",   "level": 1, "text": "Report title"}},
+    {{"type": "paragraph", "text": "Introductory paragraph."}},
+    {{"type": "table",     "data": [["Name", "Score"], ["Alice", "95"], ["Bob", "88"]]}}
+  ]
+
+WRONG — never wrap in an outer object:
+  "text": [{{"title": "...", "content": [...]}}]   ← this produces an empty file
+
+For plain text / markdown export (format="txt" or "md"), pass a plain string instead of a list.
+
 ## Payload Fields
 The user message is delivered as a JSON object with the following fields:
 - "message": the current user message
