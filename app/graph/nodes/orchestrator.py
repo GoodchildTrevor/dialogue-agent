@@ -176,6 +176,7 @@ class OrchestratorNode:
         result = []
         for registry in self.tool_registries:
             result.extend(registry.describe_for_model())
+            
         return result
 
     async def action(self, state: AssistantState) -> dict[str, Any]:
@@ -240,7 +241,9 @@ class OrchestratorNode:
         ) as t:
 
             available_tools_line = (
-                f"Available tool names (ONLY these may be called): {json.dumps(tool_names)}\n\n"
+                "CRITICAL: AVAILABLE TOOLS — use ONLY these exact names, nothing else:\n"
+                + "\n".join(f"  - {n}" for n in tool_names)
+                + "\n\n"
             )
             system_message = (
                 available_tools_line
