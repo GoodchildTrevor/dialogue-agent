@@ -229,7 +229,3 @@ Be thorough but concise. Use markdown formatting where appropriate for clarity.
 ## Refusal Policy
 {refusal_policy}
 </instructions>""".format(today=_today(), injection_defense=INJECTION_DEFENSE, refusal_policy=REFUSAL_POLICY).strip()
-    
-ROUTER_SYSTEM_PROMPT = build_router_prompt()
-ORCHESTRATOR_SYSTEM_PROMPT = build_orchestrator_prompt()
-REASONING_SYSTEM_PROMPT = build_reasoning_prompt()

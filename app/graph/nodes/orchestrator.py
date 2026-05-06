@@ -3,7 +3,7 @@ import logging
 from typing import Any
 
 from app.core.tracing import _make_json_safe, trace
-from app.graph.prompt_fragments import ORCHESTRATOR_SYSTEM_PROMPT
+from app.graph.prompt_fragments import build_orchestrator_prompt
 from app.graph.state import AssistantState
 from app.graph.tool_registry import ToolRegistry
 from app.graph.utils import (
@@ -169,8 +169,10 @@ class OrchestratorNode:
             log.warning("history search failed: %s", exc)
             matches = []
 
+        orchestrator_prompt = build_orchestrator_prompt()
+
         system_prompt = inject_history_into_prompt(
-            ORCHESTRATOR_SYSTEM_PROMPT,
+            orchestrator_prompt,
             matches,
             self.settings
         )

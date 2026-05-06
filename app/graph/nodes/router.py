@@ -3,7 +3,7 @@ import logging
 from typing import Any
 
 from app.core.tracing import trace
-from app.graph.prompt_fragments import ROUTER_SYSTEM_PROMPT
+from app.graph.prompt_fragments import build_router_prompt
 from app.graph.state import AssistantState
 from app.graph.utils import (
     _extract_token_estimate,
@@ -29,8 +29,9 @@ class RouterNode():
             input=payload,
         ) as t:
             t.input_hash = hashlib.sha256(user_message.encode()).hexdigest()
+            router_prompt = build_router_prompt()
             prompt = [
-                {"role": "system", "content": ROUTER_SYSTEM_PROMPT},
+                {"role": "system", "content": router_prompt},
                 {"role": "user", "content": user_message},
             ]
             response = await self.llm_client.chat(

@@ -2,7 +2,7 @@ import json
 from typing import Any
 
 from app.core.tracing import _make_json_safe, trace
-from app.graph.prompt_fragments import REASONING_SYSTEM_PROMPT
+from app.graph.prompt_fragments import build_reasoning_prompt
 from app.graph.state import AssistantState
 
 
@@ -36,8 +36,9 @@ class StrongModelNode():
     async def _invoke_reasoning_model(self, task: str, state: AssistantState) -> str:
         safe_context = _make_json_safe(state.get("context", {}))
         safe_steps = _make_json_safe(state.get("intermediate_steps", []))
+        reasoning_prompt = build_reasoning_prompt()
         prompt = [
-            {"role": "system", "content": REASONING_SYSTEM_PROMPT},
+            {"role": "system", "content": reasoning_prompt},
             {
                 "role": "user",
                 "content": json.dumps(
