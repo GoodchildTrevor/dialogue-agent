@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, NotRequired, TypedDict
+import operator
+from typing import Annotated, Any, NotRequired, TypedDict
 
 
 class ToolCall(TypedDict):
@@ -21,7 +22,7 @@ class AssistantState(TypedDict, total=False):
     user_id: str
     request_id: str
     context: dict[str, Any]
-    intermediate_steps: list[dict[str, Any]]
+    intermediate_steps: Annotated[list[dict[str, Any]], operator.add]
     is_complex_task: bool
     next_action: str
     final_answer: str

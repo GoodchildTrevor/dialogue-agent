@@ -125,7 +125,7 @@ class GraphRuntime:
             self._file_converter_client = MCPClient(transport2)
             self.file_converter_registry = ToolRegistry(self.settings, self._file_converter_client)
             registries.append(self.file_converter_registry)
-        
+
         self.chunker_service = ChunkerServiceClient(
             base_url=self.settings.CHUNKER_SERVICE_URL,
             timeout=self.settings.TOOL_REQUEST_TIMEOUT_SECONDS,
@@ -220,7 +220,9 @@ class GraphRuntime:
         graph.add_conditional_edges(
             "orchestrator",
             after_orchestrator,
-            {"end": END, "tools": "tools", "reasoning": "reasoning"},
+            # "orchestrator" entry allows the fallback/_fallback() path to loop back
+            # without a KeyError when next_action="orchestrator" is returned.
+            {"end": END, "tools": "tools", "reasoning": "reasoning", "orchestrator": "orchestrator"},
         )
         graph.add_conditional_edges(
             "tools",
@@ -229,4 +231,3 @@ class GraphRuntime:
         )
         graph.add_edge("reasoning", END)
         return graph.compile()
-    

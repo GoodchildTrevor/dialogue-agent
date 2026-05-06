@@ -16,7 +16,7 @@ def _truncate(value: Any, max_len: int) -> str:
     """Return a compact string representation of *value*, capped at *max_len* chars."""
     text = str(value)
     if len(text) > max_len:
-        return text[:max_len] + "…"
+        return text[:max_len] + "\u2026"
     return text
 
 
@@ -74,8 +74,6 @@ class ToolExecutorNode():
                     normalized_results.append({"ok": False, "error": str(r)})
                 else:
                     ok = r.get("ok")
-                    # Log a short preview of the result so we can tell whether the
-                    # tool returned useful data without printing the entire payload.
                     result_preview = _truncate(
                         r.get("result") or r.get("error") or r, _RES_PREVIEW_LEN
                     )
@@ -92,9 +90,20 @@ class ToolExecutorNode():
             t.output = {"results": results}
 
         errors = [result for result in results if not result.get("ok")]
-        new_steps = state.get("intermediate_steps", []) + [{"tool_calls": tool_calls, "results": results}]
+
+        # NOTE: intermediate_steps uses operator.add reducer in AssistantState,
+        # so we return only the NEW step — LangGraph appends it automatically.
+        new_step = {"tool_calls": tool_calls, "results": results}
+
+        logger.debug(
+            "[%s] tool_executor: appending step with %d call(s), %d error(s)",
+            state["request_id"],
+            len(tool_calls),
+            len(errors),
+        )
+
         update: dict[str, Any] = {
-            "intermediate_steps": new_steps,
+            "intermediate_steps": [new_step],
             "tool_results": results,
             "pending_tool_calls": [],
             "context": {**state.get("context", {}), "tool_results": results},
