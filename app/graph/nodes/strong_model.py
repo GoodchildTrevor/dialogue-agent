@@ -34,7 +34,6 @@ class StrongModelNode():
         return {"final_answer": answer, "next_action": "end"}
 
     async def _invoke_reasoning_model(self, task: str, state: AssistantState) -> str:
-        """Invoke the reasoning model for complex tasks."""
         safe_context = _make_json_safe(state.get("context", {}))
         safe_steps = _make_json_safe(state.get("intermediate_steps", []))
         prompt = [
@@ -54,5 +53,6 @@ class StrongModelNode():
         response = await self.llm_client.chat(
             model=self.settings.REASONING_MODEL,
             messages=prompt,
+            timeout=self.settings.REASONING_TIMEOUT_SECONDS,
         )
         return response.get("message", {}).get("content", "")

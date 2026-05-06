@@ -16,6 +16,12 @@ log = logging.getLogger(__name__)
 
 _RECENT_MESSAGES_WINDOW = 10
 
+_JSON_REMINDER = (
+    "\n\nREMINDER: Your entire response MUST be valid JSON only. "
+    "No prose, no markdown, no explanations. "
+    'Example: {"action": "respond", "answer": "your text here"}'
+)
+
 
 def _safe_json_loads(val: Any) -> Any:
     if isinstance(val, str):
@@ -82,7 +88,6 @@ def _sanitize_llm_output(parsed: Any, fallback_task: str) -> dict:
 
 
 def _format_intermediate_steps(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Reformat intermediate_steps so LLM receives plain-string tool results."""
     formatted = []
     for step in steps:
         calls = step.get("tool_calls", [])
@@ -185,12 +190,14 @@ class OrchestratorNode:
                 f"{json.dumps(self._all_tool_descriptions(), ensure_ascii=False)}"
             )
 
+            user_content = json.dumps(_make_json_safe(payload), ensure_ascii=False) + _JSON_REMINDER
+
             try:
                 response = await self.llm_client.chat(
                     model=self.settings.ROUTER_MODEL,
                     messages=[
                         {"role": "system", "content": system_message},
-                        {"role": "user", "content": json.dumps(_make_json_safe(payload), ensure_ascii=False)},
+                        {"role": "user", "content": user_content},
                     ],
                     format="json",
                 )
