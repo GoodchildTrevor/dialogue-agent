@@ -23,7 +23,10 @@ _JSON_REMINDER = (
     'Use exactly one of these formats:\n'
     '  {"action": "respond", "answer": "..."}\n'
     '  {"action": "tools", "tool_calls": [{"tool": "name", "arguments": {...}}]}\n'
-    '  {"action": "escalate", "task": "..."}'
+    '  {"action": "escalate", "task": "..."}\n'
+    'CRITICAL: Only call tools that are listed in "Available tools" above. '
+    'Never invent or guess tool names. If the tool you need is not listed, '
+    'use action="respond" to answer directly or action="escalate" to delegate.'
 )
 
 
@@ -40,8 +43,7 @@ def _normalize_tool_calls(raw: Any) -> list[dict]:
     """Normalise tool_calls regardless of which JSON schema the LLM used."""
     raw = _safe_json_loads(raw)
 
-    # OpenAI function-calling: {"action": "function", "function": {"name": ..., "arguments": {...}}}
-    # This is handled upstream in _sanitize_llm_output, but guard here too.
+    # Handle single tool dict: {"name": ..., "arguments": ...}
     if isinstance(raw, dict):
         name = raw.get("name") or raw.get("tool")
         args = raw.get("arguments") or raw.get("args") or {}
@@ -80,7 +82,6 @@ def _sanitize_llm_output(parsed: Any, fallback_task: str) -> dict:
 
     action = parsed.get("action")
 
-    # Normalize action to str
     if not isinstance(action, str):
         action = str(action) if action is not None else ""
 
@@ -186,6 +187,9 @@ class OrchestratorNode:
         if formatted_steps:
             last_tool_results = formatted_steps[-1].get("results", [])
 
+        tool_descriptions = self._all_tool_descriptions()
+        tool_names = [t["name"] for t in tool_descriptions if isinstance(t, dict) and "name" in t]
+
         payload = {
             "message": user_message,
             "recent_messages": recent_messages,
@@ -209,10 +213,14 @@ class OrchestratorNode:
             input=payload,
         ) as t:
 
+            available_tools_line = (
+                f"Available tool names (ONLY these may be called): {json.dumps(tool_names)}\n\n"
+            )
             system_message = (
-                f"{system_prompt}\n\n"
-                f"Available tools (JSON): "
-                f"{json.dumps(self._all_tool_descriptions(), ensure_ascii=False)}"
+                available_tools_line
+                + f"{system_prompt}\n\n"
+                + f"Available tools (full schema): "
+                + json.dumps(tool_descriptions, ensure_ascii=False)
             )
 
             user_content = json.dumps(_make_json_safe(payload), ensure_ascii=False) + _JSON_REMINDER
@@ -225,6 +233,7 @@ class OrchestratorNode:
                         {"role": "user", "content": user_content},
                     ],
                     format="json",
+                    timeout=self.settings.ORCHESTRATOR_TIMEOUT_SECONDS,
                 )
             except Exception as e:
                 log.exception("LLM call failed")
@@ -238,6 +247,19 @@ class OrchestratorNode:
 
             parsed_raw = _parse_json_object(content)
             parsed = _sanitize_llm_output(parsed_raw, user_message)
+
+            # Drop any tool calls referencing unknown tools
+            known_tools = set(tool_names)
+            valid_calls = [tc for tc in parsed["tool_calls"] if tc["tool"] in known_tools]
+            if len(valid_calls) < len(parsed["tool_calls"]):
+                unknown = [tc["tool"] for tc in parsed["tool_calls"] if tc["tool"] not in known_tools]
+                log.warning("[%s] Dropping unknown tool calls: %s", state["request_id"], unknown)
+            parsed["tool_calls"] = valid_calls
+
+            # If all tool calls were dropped but action was tools, escalate
+            if parsed["action"] == "tools" and not parsed["tool_calls"]:
+                log.warning("[%s] All tool calls invalid after filtering — escalating", state["request_id"])
+                parsed["action"] = "escalate"
 
             t.output = parsed
 
@@ -255,10 +277,6 @@ class OrchestratorNode:
             }
 
         if parsed["action"] == "tools":
-            if not parsed["tool_calls"]:
-                log.warning("[%s] action=tools but tool_calls is empty, escalating", state["request_id"])
-                return {"next_action": "reasoning"}
-
             return {
                 "pending_tool_calls": parsed["tool_calls"],
                 "next_action": "tools"
