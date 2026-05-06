@@ -16,6 +16,7 @@ log = logging.getLogger(__name__)
 
 _RECENT_MESSAGES_WINDOW = 10
 
+
 def _safe_json_loads(val: Any) -> Any:
     if isinstance(val, str):
         try:
@@ -76,6 +77,40 @@ def _sanitize_llm_output(parsed: Any, fallback_task: str) -> dict:
     }
 
 
+def _format_intermediate_steps(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Reformat intermediate_steps so LLM receives plain-string tool results.
+
+    Each step contains ``tool_calls`` and ``results``.  The results may hold
+    raw fastmcp objects that survived ``_make_json_safe``; we collapse them to
+    a single ``content`` string here so the model can read them directly.
+    """
+    formatted = []
+    for step in steps:
+        calls = step.get("tool_calls", [])
+        results = step.get("results", [])
+        formatted_results = []
+        for r in results:
+            if not isinstance(r, dict):
+                formatted_results.append({"ok": False, "content": str(r)})
+                continue
+            if not r.get("ok", False):
+                error = r.get("error") or {}
+                msg = error.get("message", str(error)) if isinstance(error, dict) else str(error)
+                formatted_results.append({"ok": False, "error": msg})
+            else:
+                raw_result = r.get("result", {})
+                if isinstance(raw_result, dict):
+                    content = raw_result.get("content", "")
+                else:
+                    content = str(raw_result)
+                # Ensure content is always a plain string
+                if not isinstance(content, str):
+                    content = json.dumps(_make_json_safe(content), ensure_ascii=False)
+                formatted_results.append({"ok": True, "tool": r.get("tool", ""), "content": content})
+        formatted.append({"tool_calls": calls, "results": formatted_results})
+    return formatted
+
+
 class OrchestratorNode:
 
     def __init__(self, llm_client, settings, tool_registries: list[ToolRegistry], history_service):
@@ -94,7 +129,7 @@ class OrchestratorNode:
         messages = state["messages"]
         user_message = messages[-1]["content"]
         user_id = state["user_id"]
-        
+
         try:
             matches = await self.history_service.search(
                 query=user_message,
@@ -116,13 +151,29 @@ class OrchestratorNode:
             for m in messages[-(_RECENT_MESSAGES_WINDOW + 1):-1]
         ]
 
+        raw_steps = state.get("intermediate_steps", [])
+        formatted_steps = _format_intermediate_steps(raw_steps)
+
+        # Also expose the last tool results at the top level for easy access
+        last_tool_results: list[dict] = []
+        if formatted_steps:
+            last_tool_results = formatted_steps[-1].get("results", [])
+
         payload = {
             "message": user_message,
             "recent_messages": recent_messages,
             "context": state.get("context", {}),
-            "intermediate_steps": state.get("intermediate_steps", []),
+            "intermediate_steps": formatted_steps,
+            "last_tool_results": last_tool_results,
             "tool_retry_count": state.get("tool_retry_count", 0),
         }
+
+        log.debug(
+            "[%s] orchestrator payload intermediate_steps=%d last_tool_results=%d",
+            state["request_id"],
+            len(formatted_steps),
+            len(last_tool_results),
+        )
 
         async with trace(
             step_name="orchestrator",
@@ -154,6 +205,8 @@ class OrchestratorNode:
 
             content = response.get("message", {}).get("content", "")
 
+            log.debug("[%s] orchestrator raw LLM response: %.500s", state["request_id"], content)
+
             parsed_raw = _parse_json_object(content)
             parsed = _sanitize_llm_output(parsed_raw, user_message)
 
@@ -163,7 +216,7 @@ class OrchestratorNode:
             "[%s] action=%s tools=%s",
             state["request_id"],
             parsed["action"],
-            [t["tool"] for t in parsed["tool_calls"]],
+            [tc["tool"] for tc in parsed["tool_calls"]],
         )
 
         if parsed["action"] == "respond":
@@ -174,6 +227,7 @@ class OrchestratorNode:
 
         if parsed["action"] == "tools":
             if not parsed["tool_calls"]:
+                log.warning("[%s] action=tools but tool_calls is empty, escalating", state["request_id"])
                 return {"next_action": "reasoning"}
 
             return {
