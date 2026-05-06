@@ -37,10 +37,6 @@ def get_runtime(request: Request) -> GraphRuntime:
     return request.app.state.runtime
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 async def _save_and_embed(
     runtime: GraphRuntime,
     *,
@@ -120,16 +116,16 @@ async def stream(
     async def event_stream() -> AsyncGenerator[str, None]:
         task = asyncio.create_task(runtime.run(initial_state))
         try:
-            while True:
-                if task.done() and queue.empty():
-                    break
+            while not task.done():
                 try:
-                    status = await asyncio.wait_for(queue.get(), timeout=0.2)
+                    status = await asyncio.wait_for(queue.get(), timeout=0.1)
                     yield f"event: status\ndata: {json.dumps({'message': status}, ensure_ascii=False)}\n\n"
                 except asyncio.TimeoutError:
-                    if task.done():
-                        break
                     continue
+
+            while not queue.empty():
+                status = queue.get_nowait()
+                yield f"event: status\ndata: {json.dumps({'message': status}, ensure_ascii=False)}\n\n"
 
             result = await task
             answer = result.get("final_answer", "")
@@ -146,6 +142,7 @@ async def stream(
             for token in answer.split():
                 yield f"event: token\ndata: {json.dumps({'token': token + ' '}, ensure_ascii=False)}\n\n"
             yield f"event: done\ndata: {json.dumps({'answer': answer}, ensure_ascii=False)}\n\n"
+            yield "data: [DONE]\n\n"
 
         except Exception as exc:
             logger.error("Stream error", exc_info=exc)
