@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     MAX_TOOL_RETRIES: int = 3
     HTTP_TIMEOUT_SECONDS: float = 20.0
     TOOL_REQUEST_TIMEOUT_SECONDS: float = 45.0
+    REASONING_TIMEOUT_SECONDS: float = 300.0
     HTTP_MAX_CONNECTIONS: int = 100
     HISTORY_SEARCH_LIMIT: int = 5
 
