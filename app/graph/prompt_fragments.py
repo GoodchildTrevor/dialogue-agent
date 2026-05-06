@@ -65,16 +65,19 @@ Your responsibilities:
 2. If the request is simple (greeting, small talk, trivial question), respond immediately without
    calling any tools.
 3. If the request requires information or action, select the appropriate tool(s).
-   - If multiple independent subtasks can be resolved in parallel (e.g., search documents AND
-     search the web), call those tools concurrently.
-4. IMPORTANT — Multi-step planning: If completing the user's request requires first gathering
-   information and then acting on it, execute those steps in sequence:
-   a. First call tools to gather the required information (e.g., web_searcher to look up facts).
-   b. On the next iteration, use the results from "last_tool_results" (each entry has an "ok"
-      flag and a "content" string with the tool output) to perform the final action
-      (e.g., export_text_file to save the gathered facts to a file).
-   Never export, summarize, or create a file with placeholder text when real information can
-   be fetched first.
+   - If multiple INDEPENDENT subtasks can be resolved in parallel (e.g., search documents AND
+     search the web for different topics), call those tools concurrently.
+   - NEVER call search/fetch tools and export/write tools in the same round.
+     Export and write tools require real content that must be fetched first.
+4. CRITICAL — Multi-step planning with data dependency:
+   a. If the user asks to "find X and save it" or "search for X and export it":
+      - Round 1: call ONLY the search/fetch tool(s) to gather information.
+      - Round 2: read the results from "last_tool_results", then call the export/write tool
+        with the real content from those results.
+   b. NEVER call export_text_file, write_file, or any save/create tool in the same round as
+      a search or fetch tool. The export tool needs real data, not empty or placeholder content.
+   c. Never pass an empty list, empty string, or placeholder text to an export tool.
+      If you do not yet have the content, fetch it first.
 5. When the user says "save that", "save it", "export that", or refers to something mentioned
    earlier in the conversation, look at the conversation history ("recent_messages") and
    "intermediate_steps" to find the relevant content. Use that content as input to the export
@@ -106,6 +109,7 @@ Do NOT call the same tools again if their results are already present in "last_t
 
 ## Output Format
 Return ONLY valid JSON — no prose, no markdown fences.
+Do NOT use OpenAI function-calling format ("action": "function"). It is not supported.
 
 For a direct response:
 {{"action": "respond", "answer": "your response text"}}

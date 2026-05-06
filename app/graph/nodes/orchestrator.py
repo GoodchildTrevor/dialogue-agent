@@ -18,8 +18,12 @@ _RECENT_MESSAGES_WINDOW = 10
 
 _JSON_REMINDER = (
     "\n\nREMINDER: Your entire response MUST be valid JSON only. "
-    "No prose, no markdown, no explanations. "
-    'Example: {"action": "respond", "answer": "your text here"}'
+    "No prose, no markdown, no explanations outside the JSON. "
+    "Do NOT use OpenAI function-calling format. "
+    'Use exactly one of these formats:\n'
+    '  {"action": "respond", "answer": "..."}\n'
+    '  {"action": "tools", "tool_calls": [{"tool": "name", "arguments": {...}}]}\n'
+    '  {"action": "escalate", "task": "..."}'
 )
 
 
@@ -33,7 +37,19 @@ def _safe_json_loads(val: Any) -> Any:
 
 
 def _normalize_tool_calls(raw: Any) -> list[dict]:
+    """Normalise tool_calls regardless of which JSON schema the LLM used."""
     raw = _safe_json_loads(raw)
+
+    # OpenAI function-calling: {"action": "function", "function": {"name": ..., "arguments": {...}}}
+    # This is handled upstream in _sanitize_llm_output, but guard here too.
+    if isinstance(raw, dict):
+        name = raw.get("name") or raw.get("tool")
+        args = raw.get("arguments") or raw.get("args") or {}
+        if isinstance(args, str):
+            args = _safe_json_loads(args)
+        if name:
+            return [{"tool": str(name), "arguments": args if isinstance(args, dict) else {}}]
+        return []
 
     if not isinstance(raw, list):
         return []
@@ -43,36 +59,45 @@ def _normalize_tool_calls(raw: Any) -> list[dict]:
         if isinstance(item, dict):
             tool = item.get("tool") or item.get("name")
             args = item.get("args") or item.get("arguments") or {}
-
             if isinstance(args, str):
                 args = _safe_json_loads(args)
                 if not isinstance(args, dict):
                     args = {}
-
             if tool:
                 result.append({
                     "tool": str(tool),
                     "arguments": args if isinstance(args, dict) else {}
                 })
-
         elif isinstance(item, str):
-            result.append({
-                "tool": item,
-                "arguments": {}
-            })
+            result.append({"tool": item, "arguments": {}})
 
     return result
 
 
 def _sanitize_llm_output(parsed: Any, fallback_task: str) -> dict:
     if not isinstance(parsed, dict):
-        return {"action": "escalate", "task": fallback_task, "tool_calls": []}
+        return {"action": "escalate", "task": fallback_task, "tool_calls": [], "answer": ""}
 
     action = parsed.get("action")
 
-    # Guard against LLM returning action as a dict or other non-string type
+    # Normalize action to str
     if not isinstance(action, str):
         action = str(action) if action is not None else ""
+
+    # OpenAI function-calling compat: {"action": "function", "function": {"name": ..., "arguments": ...}}
+    if action == "function":
+        fn = parsed.get("function", {})
+        if isinstance(fn, dict):
+            tool_calls = _normalize_tool_calls(fn)
+            if tool_calls:
+                log.warning("LLM used OpenAI function-calling format — normalizing to tools")
+                return {
+                    "action": "tools",
+                    "answer": "",
+                    "task": fallback_task,
+                    "tool_calls": tool_calls,
+                }
+        action = "escalate"
 
     if action not in {"respond", "tools", "escalate"}:
         action = "escalate"
