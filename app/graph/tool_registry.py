@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from typing import Any, Callable, Awaitable
@@ -54,6 +55,8 @@ def _normalize_content(content: Any) -> str:
         return "\n".join(parts)
 
     if isinstance(content, dict):
+        if content.get("type") == "image":
+            return f"[IMAGE:base64:{content.get('mimeType','image/png')}:{content.get('data','')}]"
         return content.get("text", str(content))
 
     text = getattr(content, "text", None)
@@ -84,6 +87,7 @@ class ToolRegistry:
         self._mcp_client = mcp_client
         self._tools: dict[str, dict[str, Any]] = {}
         self._descriptions_cache: list[dict[str, Any]] | None = None
+        self._refresh_lock = asyncio.Lock()
 
     async def startup(self) -> None:
         """Start the MCP client connection.
@@ -128,18 +132,21 @@ class ToolRegistry:
         On failure the internal tool dictionary is cleared and the error
         is logged.
         """
-        try:
-            tools_list = await self._mcp_client.list_tools()
-            self._tools.clear()
-            for tool in tools_list:
-                tool_name = tool.get("name") if isinstance(tool, dict) else getattr(tool, "name", None)
-                if tool_name:
-                    self._tools[tool_name] = tool
-            self._descriptions_cache = None
-            logger.info("Refreshed %d tools from MCP server", len(self._tools))
-        except Exception as e:
-            logger.error("Failed to refresh tools from MCP server: %s", e)
-            self._tools = {}
+        async with self._refresh_lock:  
+            if not self.is_empty:
+                return
+            try:
+                tools_list = await self._mcp_client.list_tools()
+                new_tools = {}
+                for tool in tools_list:
+                    tool_name = tool.get("name") if isinstance(tool, dict) else getattr(tool, "name", None)
+                    if tool_name:
+                        new_tools[tool_name] = tool
+                self._tools = new_tools
+                self._descriptions_cache = None
+                logger.info("Refreshed %d tools from MCP server", len(self._tools))
+            except Exception as e:
+                logger.error("Failed to refresh tools from MCP server: %s", e)
 
     def describe_for_model(self) -> list[dict[str, Any]]:
         """Return tool descriptions in a format suitable for LLM consumption.
