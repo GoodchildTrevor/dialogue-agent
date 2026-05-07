@@ -57,13 +57,13 @@ async def lifespan(app: FastAPI):
         settings=settings,
     )
 
-    # Initialize metrics watermark to prevent double-counting on restart
-    await init_watermark()
-
     app.state.runtime = runtime
     app.state.file_ingestion = file_ingestion
     app.include_router(api_router, prefix=settings.API_V1_PREFIX)
     app.include_router(metrics_router)   # /metrics — no version prefix
+
+    # Initialize metrics watermark to prevent double-counting on restart
+    await init_watermark()
 
     yield
 

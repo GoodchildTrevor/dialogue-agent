@@ -87,14 +87,13 @@ class ToolExecutorNode():
                     )
                     normalized_results.append(r)
             results = normalized_results
-            t.output = {"results": results}
 
-        errors = [result for result in results if not result.get("ok")]
-        
-        # Set rejection reason for metrics tracking
-        if errors:
-            t.rejection_reason = "tool_error"
+            # Set rejection reason for metrics tracking
+            errors = [result for result in results if not result.get("ok")]
+            t.output = {"results": results}
             t.tool_names = [c.get("tool") for c in tool_calls]
+            if errors:
+                t.rejection_reason = "tool_error"
 
         new_step = {"tool_calls": tool_calls, "results": results}
 
