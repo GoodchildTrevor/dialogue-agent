@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from app.api.metrics_router import router as metrics_router
 from app.api.routes import router as api_router
 from app.core.config import get_settings
 from app.core.llm_client import LLMClient
@@ -58,6 +59,7 @@ async def lifespan(app: FastAPI):
     app.state.runtime = runtime
     app.state.file_ingestion = file_ingestion
     app.include_router(api_router, prefix=settings.API_V1_PREFIX)
+    app.include_router(metrics_router)   # /metrics — no version prefix
 
     yield
 
