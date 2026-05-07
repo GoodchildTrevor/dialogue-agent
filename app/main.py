@@ -44,14 +44,17 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("Failed to refresh tool descriptions on startup: %s", e)
 
-    qdrant_ingester = QdrantIngesterClient()
+    qdrant_ingester = QdrantIngesterClient(
+        base_url=settings.QDRANT_INGESTER_URL,
+        api_key=settings.API_KEY,
+    )
     pg_ingester = IngesterService()
     file_ingestion = FileIngestionService(
         pg_ingester=pg_ingester,
         qdrant_ingester=qdrant_ingester,
         settings=settings,
     )
-    
+
     app.state.runtime = runtime
     app.state.file_ingestion = file_ingestion
     app.include_router(api_router, prefix=settings.API_V1_PREFIX)

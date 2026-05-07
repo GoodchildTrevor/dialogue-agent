@@ -16,6 +16,7 @@ class Settings(BaseSettings):
 
     QDRANT_URL: str = "http://qdrant:6333"
     QDRANT_COLLECTION_DOCS: str = "documents"
+    QDRANT_INGESTER_URL: str = "http://qdrant-ingester:8001"
     MAX_UPLOAD_SIZE_MB: int = 50
     UPLOAD_STORAGE_DIR: str
     ALLOWED_MIME_TYPES: list[str] = [
@@ -37,6 +38,10 @@ class Settings(BaseSettings):
 
     CHUNKER_SERVICE_URL: str
     DISTANCE_THRESHOLD: float = 0.45
+
+    # File ingestion chunking params (forwarded to qdrant-ingester)
+    CHUNK_SIZE: int = 512
+    OVERLAP: int = 50
 
     # Embedding (in-process via fastembed)
     EMBEDDING_MODEL_NAME: str
