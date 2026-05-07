@@ -5,6 +5,7 @@ import logging
 import uuid
 from typing import Sequence
 
+from fastembed import TextEmbedding
 from more_itertools import chunked
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,11 +32,10 @@ class IngesterService:
         self._batch_size = settings.EMBEDDING_BATCH_SIZE
         self._insert_batch_size = settings.EMBEDDING_INSERT_BATCH_SIZE
         self._model_name = settings.EMBEDDING_MODEL_NAME
-        self._model = None  # lazy-loaded on first embed call
+        self._model = None  
 
     def _get_model(self):
         if self._model is None:
-            from fastembed import TextEmbedding
             self._model = TextEmbedding(model_name=self._model_name)
             logger.info("Loaded embedding model: %s", self._model_name)
         return self._model
