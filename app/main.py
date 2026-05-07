@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from app.api.metrics_router import router as metrics_router
 from app.api.routes import router as api_router
 from app.core.config import get_settings
+from app.metrics import init_watermark
 from app.core.llm_client import LLMClient
 from app.graph.graph_runtime import GraphRuntime
 from app.services.qdrant_ingester_client import QdrantIngesterClient
@@ -55,6 +56,9 @@ async def lifespan(app: FastAPI):
         qdrant_ingester=qdrant_ingester,
         settings=settings,
     )
+
+    # Initialize metrics watermark to prevent double-counting on restart
+    await init_watermark()
 
     app.state.runtime = runtime
     app.state.file_ingestion = file_ingestion

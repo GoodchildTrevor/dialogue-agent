@@ -40,6 +40,7 @@ class StrongModelNode():
             request_id=state["request_id"],
             input=payload,
         ) as t:
+            t.route_decision = "reasoning"
             t.model_used = self.settings.REASONING_MODEL
             result = await self._invoke_reasoning_model(task, state)
             t.output = result

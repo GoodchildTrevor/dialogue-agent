@@ -10,9 +10,10 @@ Exposes metrics derived from the `traces` table:
 from __future__ import annotations
 import logging
 from typing import Sequence
+from datetime import datetime, timezone
 
 from prometheus_client import CollectorRegistry, Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
-from sqlalchemy import select, text
+from sqlalchemy import select
 
 from app.db.models import TraceRecord
 from app.db.session import get_session_maker
@@ -55,6 +56,25 @@ model_calls_counter = Counter(
 _last_scraped_at: float = 0.0
 
 
+async def init_watermark() -> None:
+    """Seed the watermark from the most recent trace row so we don't replay history on restart."""
+    global _last_scraped_at
+    from sqlalchemy import select, func
+    from datetime import datetime, timezone
+    
+    session_maker = get_session_maker()
+    async with session_maker() as session:
+        result = await session.execute(
+            select(func.max(TraceRecord.created_at))
+        )
+        latest = result.scalar_one_or_none()
+        if latest is not None:
+            _last_scraped_at = latest.timestamp()
+        else:
+            # If no records exist yet, set to current time to avoid processing old records
+            _last_scraped_at = datetime.now(timezone.utc).timestamp()
+
+
 async def collect_metrics() -> None:
     """Pull new TraceRecord rows since last scrape and update all metrics."""
     global _last_scraped_at
@@ -63,8 +83,11 @@ async def collect_metrics() -> None:
     async with session_maker() as session:
         stmt = (
             select(TraceRecord)
-            .where(text("EXTRACT(EPOCH FROM created_at) > :ts").bindparams(ts=_last_scraped_at))
+            .where(
+                TraceRecord.created_at > datetime.fromtimestamp(_last_scraped_at, tz=timezone.utc)
+            )
             .order_by(TraceRecord.created_at.asc())
+            .limit(1000)   # prevent full table scan on first scrape
         )
         result = await session.execute(stmt)
         rows: Sequence[TraceRecord] = result.scalars().all()
