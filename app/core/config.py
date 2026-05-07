@@ -1,5 +1,3 @@
-from functools import lru_cache
-
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -15,6 +13,15 @@ class Settings(BaseSettings):
     API_V1_PREFIX: str = "/api/v1"
     API_KEY: str
     LOG_LEVEL: str = "INFO"
+
+    QDRANT_URL: str = "http://qdrant:6333"
+    QDRANT_COLLECTION_DOCS: str = "documents"
+    MAX_UPLOAD_SIZE_MB: int = 50
+    UPLOAD_STORAGE_DIR: str
+    ALLOWED_MIME_TYPES: list[str] = [
+        "application/pdf",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    ]
 
     LLM_BASE_URL: str
     ROUTER_MODEL: str
