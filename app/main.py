@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import logging.config
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -10,6 +9,9 @@ from app.api.routes import router as api_router
 from app.core.config import get_settings
 from app.core.llm_client import LLMClient
 from app.graph.graph_runtime import GraphRuntime
+from app.services.qdrant_ingester_client import QdrantIngesterClient
+from app.services.file_ingestion_service import FileIngestionService
+from app.services.pg_ingester import IngesterService
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +24,6 @@ def _configure_logging(level: str) -> None:
         datefmt="%Y-%m-%dT%H:%M:%S",
         force=True,
     )
-    # Keep third-party loggers quieter so our app logs stand out
     for noisy in ("httpx", "httpcore", "uvicorn.access", "fastmcp", "mcp"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
@@ -43,7 +44,16 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("Failed to refresh tool descriptions on startup: %s", e)
 
+    qdrant_ingester = QdrantIngesterClient()
+    pg_ingester = IngesterService()
+    file_ingestion = FileIngestionService(
+        pg_ingester=pg_ingester,
+        qdrant_ingester=qdrant_ingester,
+        settings=settings,
+    )
+    
     app.state.runtime = runtime
+    app.state.file_ingestion = file_ingestion
     app.include_router(api_router, prefix=settings.API_V1_PREFIX)
 
     yield

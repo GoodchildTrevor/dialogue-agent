@@ -33,12 +33,12 @@ class FileIngestionService:
 
     def __init__(
         self,
-        chunker: ChunkerServiceClient,
         pg_ingester: IngesterService,
+        qdrant_ingester: QdrantIngesterClient,
         settings: Settings,
     ) -> None:
-        self.chunker = chunker
         self.pg_ingester = pg_ingester
+        self.qdrant_ingester = qdrant_ingester
         self.settings = settings
 
     async def process(self, file_id: uuid.UUID) -> None:
@@ -54,7 +54,7 @@ class FileIngestionService:
                     
                 await self._update_file_status(session, file_id, "upserting")
 
-            ingest_response = await QdrantIngesterClient.ingest(
+            ingest_response = await self.qdrant_ingester.ingest(
                 collection=self.settings.QDRANT_COLLECTION_DOCS,
                 file_path=str(Path(db_file.storage_path).resolve()),
                 chunk_size=self.settings.CHUNK_SIZE,
