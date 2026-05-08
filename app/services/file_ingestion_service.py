@@ -54,7 +54,7 @@ class FileIngestionService:
 
             ingest_response = await self.qdrant_ingester.ingest(
                 collection=self.settings.QDRANT_COLLECTION_DOCS,
-                file_path=str(Path(db_file.storage_path).resolve()),
+                file_path=str(Path(db_file.storage_path).relative_to(self.settings.STORAGE_PATH)),
                 chunk_size=self.settings.CHUNK_SIZE,
                 overlap=self.settings.OVERLAP,
                 extra_payload={"user_id": db_file.user_id},
