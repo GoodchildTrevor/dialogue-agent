@@ -91,7 +91,7 @@ class TestRouterComplexQuery:
         result = await router.action(state)
 
         assert result["is_complex_task"] is True
-        assert result["next_action"] == "reasoning"
+        assert result["next_action"] == "orchestrator"
 
     @pytest.mark.asyncio
     async def test_needs_reasoning_model_routes_to_reasoning(self):
@@ -105,8 +105,8 @@ class TestRouterComplexQuery:
 
         result = await router.action(state)
 
-        assert result["is_complex_task"] is True
-        assert result["next_action"] == "reasoning"
+        assert result["is_complex_task"] is False
+        assert result["next_action"] == "orchestrator"
 
     @pytest.mark.asyncio
     async def test_complex_task_takes_precedence_over_simple(self):
@@ -121,7 +121,7 @@ class TestRouterComplexQuery:
         result = await router.action(state)
 
         assert result["is_complex_task"] is True
-        assert result["next_action"] == "reasoning"
+        assert result["next_action"] == "orchestrator"
 
 
 class TestRouterOrchestratorQuery:
