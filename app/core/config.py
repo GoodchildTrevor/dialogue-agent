@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     QDRANT_URL: str = "http://qdrant:6333"
     QDRANT_COLLECTION_DOCS: str = "documents"
     QDRANT_INGESTER_URL: str = "http://qdrant-ingester:8001"
+    QDRANT_INGESTER_API: str
     MAX_UPLOAD_SIZE_MB: int = 50
     UPLOAD_STORAGE_DIR: str
     ALLOWED_MIME_TYPES: list[str] = [
