@@ -48,7 +48,7 @@ async def lifespan(app: FastAPI):
 
     qdrant_ingester = QdrantIngesterClient(
         base_url=settings.QDRANT_INGESTER_URL,
-        api_key=settings.API_KEY,
+        api_key=settings.QDRANT_INGESTER_API,
     )
     pg_ingester = IngesterService()
     file_ingestion = FileIngestionService(
