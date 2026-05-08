@@ -52,9 +52,19 @@ class FileIngestionService:
                     return
                 await self._update_file_status(session, file_id, "upserting")
 
+            storage_root = Path(self.settings.UPLOAD_STORAGE_DIR).resolve()
+            abs_path = Path(db_file.storage_path).resolve()
+            relative_path = abs_path.relative_to(storage_root)
+            logger.debug(
+                "Resolved file path: abs=%s, relative=%s, storage_root=%s",
+                abs_path,
+                relative_path,
+                storage_root,
+            )
+
             ingest_response = await self.qdrant_ingester.ingest(
                 collection=self.settings.QDRANT_COLLECTION_DOCS,
-                file_path=str(Path(db_file.storage_path).relative_to(self.settings.STORAGE_PATH)),
+                file_path=str(relative_path),
                 chunk_size=self.settings.CHUNK_SIZE,
                 overlap=self.settings.OVERLAP,
                 extra_payload={"user_id": db_file.user_id},
