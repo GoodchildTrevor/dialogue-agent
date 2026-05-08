@@ -17,7 +17,7 @@ from sqlalchemy import select
 
 from app.api.schemas import ChatRequest, ChatResponse
 from app.core.config import Settings
-from app.db.models import File
+from app.db.models import File as FileModel
 from app.db.session import get_session_maker
 from app.graph.graph_runtime import GraphRuntime
 
@@ -240,7 +240,7 @@ async def upload_files(
                 await f.write(chunk)
 
         async with get_session_maker()() as session:
-            db_file = File(id=file_id, user_id=user_id,
+            db_file = FileModel(id=file_id, user_id=user_id,
                            original_name=upload.filename,
                            mime_type=upload.content_type,
                            storage_path=str(path),
@@ -264,7 +264,7 @@ async def file_status(
     api_key: str = Depends(get_api_key)
 ) -> JSONResponse:
         async with get_session_maker()() as session:
-            stmt = select(File.status, File.error_message).where(File.id == file_id)
+            stmt = select(FileModel.status, File.error_message).where(File.id == file_id)
             result = await session.execute(stmt)
             row = result.fetchone()
         
