@@ -11,8 +11,6 @@ services:
       - "8000:8000"
     depends_on:
       - postgres
-      - pg-vector-ingester
-      - file-converter-mcp
     volumes:
       - file_storage:/app/storage
     extra_hosts:
@@ -27,21 +25,6 @@ services:
     env_file:
       - .env
     profiles: ["test"]
-
-  pg-vector-ingester:
-    build:
-      context: ../pg-vector-ingester
-      dockerfile: Dockerfile
-    env_file:
-      - .env
-    environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-    ports:
-      - "8001:8000"
-    depends_on:
-      postgres:
-        condition: service_healthy
-    restart: unless-stopped
 
   postgres:
     image: pgvector/pgvector:pg16
@@ -72,21 +55,7 @@ services:
     depends_on:
       - app
 
-  grafana:
-    image: grafana/grafana:10.4.3
-    ports:
-      - "3000:3000"
-    volumes:
-      - grafana_data:/var/lib/grafana
-      - ./grafana/provisioning:/etc/grafana/provisioning:ro
-    environment:
-      - GF_SECURITY_ADMIN_PASSWORD=admin
-      - GF_USERS_ALLOW_SIGN_UP=false
-    depends_on:
-      - prometheus
-
 volumes:
   postgres_data:
   file_storage:
   prometheus_data:
-  grafana_data:
