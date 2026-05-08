@@ -264,7 +264,7 @@ async def file_status(
     api_key: str = Depends(get_api_key)
 ) -> JSONResponse:
         async with get_session_maker()() as session:
-            stmt = select(FileModel.status, File.error_message).where(File.id == file_id)
+            stmt = select(FileModel.status, FileModel.error_message).where(FileModel.id == file_id)
             result = await session.execute(stmt)
             row = result.fetchone()
         
