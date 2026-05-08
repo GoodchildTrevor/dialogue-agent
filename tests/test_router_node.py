@@ -1,6 +1,6 @@
 """Tests for the router node."""
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -22,7 +22,7 @@ def _make_state(**overrides) -> dict[str, Any]:
 def _make_router(llm_response: dict) -> RouterNode:
     """Create a router node with a mock LLM client."""
     client = MagicMock()
-    client.chat.return_value = llm_response
+    client.chat = AsyncMock(return_value=llm_response)
     settings = MagicMock()
     settings.ROUTER_MODEL = "test-model"
     settings.REASONING_MODEL = "test-reasoning-model"
