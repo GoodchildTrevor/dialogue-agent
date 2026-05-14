@@ -224,6 +224,11 @@ class OrchestratorNode:
         return result
 
     async def action(self, state: AssistantState) -> dict[str, Any]:
+        log.debug(
+            "[%s] orchestrator uploaded_files raw from state: %s",
+            state["request_id"],
+            state.get("uploaded_files"),
+        )
         messages = state["messages"]
         user_message = messages[-1]["content"]
         user_id = state["user_id"]
@@ -262,18 +267,6 @@ class OrchestratorNode:
         tool_names = [t["name"] for t in tool_descriptions if isinstance(t, dict) and "name" in t]
 
         uploaded_files = state.get("uploaded_files") or []
-
-        # Log a warning when the user message references a file but no files
-        # were attached — this usually means the client omitted uploaded_files.
-        if not uploaded_files:
-            _file_ext = r"\.(?:pdf|docx?|xlsx?|pptx?|txt|csv)\b"
-            _file_words = r"(?:файл|документ|файла|документа|file|document|attachment)"
-            if re.search(_file_ext, user_message, re.IGNORECASE) or re.search(_file_words, user_message, re.IGNORECASE):
-                log.warning(
-                    "[%s] User message references a file but uploaded_files is empty — "
-                    "client likely omitted file_ids from the chat request.",
-                    state["request_id"],
-                )
 
         payload = {
             "message": user_message,
