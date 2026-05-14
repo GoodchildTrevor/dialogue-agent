@@ -25,7 +25,8 @@ class FileIngestionService:
     2. Update status to 'upserting'
     3. Send to qdrant-ingester (chunking + embedding happens there)
        - If INLINE_THRESHOLD is set and document is small enough,
-         qdrant-ingester returns raw text instead of ingesting.
+         qdrant-ingester returns raw text instead of ingesting into Qdrant.
+         In that case inline_text is saved to the DB for direct LLM injection.
     4. Update status to 'indexed'
     On exception: Update status to 'error' with error message
     """
@@ -78,21 +79,25 @@ class FileIngestionService:
                     ingest_response.get("message", "Ingestion failed")
                 )
 
-            if ingest_response.get("inline_text"):
+            inline_text: str | None = ingest_response.get("inline_text") or None
+
+            if inline_text:
                 logger.info(
-                    "File %s returned as inline text (%d tokens), skipped Qdrant upsert.",
+                    "File %s is inline (%d tokens), saving text to DB, skipping Qdrant upsert.",
                     file_id,
                     ingest_response.get("token_count", 0),
                 )
 
             async with get_session_maker()() as session:
-                await self._update_file_status(session, file_id, "indexed")
+                await self._update_file_status(
+                    session, file_id, "indexed", inline_text=inline_text
+                )
 
         except Exception as exc:
             logger.exception("Failed to process file_id=%s: %s", file_id, exc)
             async with get_session_maker()() as session:
                 await self._update_file_status(
-                    session, file_id, "error", str(exc)
+                    session, file_id, "error", error_message=str(exc)
                 )
             raise
 
@@ -108,12 +113,16 @@ class FileIngestionService:
         file_id: uuid.UUID,
         status: str,
         error_message: str | None = None,
+        inline_text: str | None = None,
     ) -> None:
-        """Update file status in database."""
+        """Update file status (and optionally inline_text) in database."""
+        values: dict = {"status": status, "error_message": error_message}
+        if inline_text is not None:
+            values["inline_text"] = inline_text
         stmt = (
             update(File)
             .where(File.id == file_id)
-            .values(status=status, error_message=error_message)
+            .values(**values)
         )
         await session.execute(stmt)
         await session.commit()

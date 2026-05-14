@@ -75,11 +75,7 @@ _SSE_HEADERS = {
 
 
 def _sse(payload: dict) -> str:
-    """Encode *payload* as a plain SSE data frame (no event name).
-
-    Plain ``data:`` frames are visible to *all* EventSource listeners and
-    ``curl -N`` without any event-type filter.
-    """
+    """Encode *payload* as a plain SSE data frame (no event name)."""
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
@@ -87,21 +83,9 @@ _MAX_FILENAME_LEN = 200
 
 
 def _sanitize_filename(name: str) -> str:
-    """Return a filesystem-safe version of *name*.
-
-    * Strips path separators and traversal sequences (``..``).
-    * Replaces any character outside ``[A-Za-z0-9._-]`` with ``_``.
-    * Collapses consecutive underscores.
-    * Truncates to ``_MAX_FILENAME_LEN`` characters.
-    * Falls back to ``"file"`` if the result is empty.
-    """
-    # Take only the basename to prevent path traversal
     name = Path(name).name
-    # Remove anything that isn't alphanumeric, dot, hyphen, or underscore
     name = re.sub(r"[^\w.\-]", "_", name)
-    # Collapse repeated underscores
     name = re.sub(r"_+", "_", name).strip("_")
-    # Truncate
     if len(name) > _MAX_FILENAME_LEN:
         name = name[:_MAX_FILENAME_LEN]
     return name or "file"
@@ -219,7 +203,6 @@ async def upload_files(
     settings = request.app.state.settings
     max_bytes = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
 
-    # Validate MIME before streaming
     for upload in files:
         if upload.content_type not in settings.ALLOWED_MIME_TYPES:
             raise HTTPException(415, f"Unsupported type: {upload.content_type}")
@@ -242,12 +225,15 @@ async def upload_files(
                 await f.write(chunk)
 
         async with get_session_maker()() as session:
-            db_file = FileModel(id=file_id, user_id=user_id,
-                           original_name=upload.filename,
-                           mime_type=upload.content_type,
-                           storage_path=str(path),
-                           size_bytes=size_bytes,
-                           status="pending")
+            db_file = FileModel(
+                id=file_id,
+                user_id=user_id,
+                original_name=upload.filename,
+                mime_type=upload.content_type,
+                storage_path=str(path),
+                size_bytes=size_bytes,
+                status="pending",
+            )
             session.add(db_file)
             await session.commit()
 
@@ -263,19 +249,26 @@ async def upload_files(
 async def file_status(
     file_id: uuid.UUID,
     request: Request,
-    api_key: str = Depends(get_api_key)
+    api_key: str = Depends(get_api_key),
 ) -> JSONResponse:
-        async with get_session_maker()() as session:
-            stmt = select(FileModel.status, FileModel.error_message).where(FileModel.id == file_id)
-            result = await session.execute(stmt)
-            row = result.fetchone()
-        
-        if not row:
-            raise HTTPException(404, "File not found")
-            
-        status, error_message = row
-        return JSONResponse({
-            "file_id": str(file_id), 
-            "status": status, 
-            "error": error_message
-        })
+    async with get_session_maker()() as session:
+        stmt = select(
+            FileModel.status,
+            FileModel.error_message,
+            FileModel.inline_text,
+            FileModel.original_name,
+        ).where(FileModel.id == file_id)
+        result = await session.execute(stmt)
+        row = result.fetchone()
+
+    if not row:
+        raise HTTPException(404, "File not found")
+
+    status, error_message, inline_text, original_name = row
+    return JSONResponse({
+        "file_id": str(file_id),
+        "filename": original_name,
+        "status": status,
+        "error": error_message,
+        "inline_text": inline_text,  # None if file was chunked into Qdrant
+    })

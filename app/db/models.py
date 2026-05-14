@@ -22,9 +22,14 @@ class File(Base):
 
     Lifecycle (status field):
       pending  → file saved to storage, not yet sent to chunker
-      chunking → request sent to chunker_service
-      indexed  → chunker + pg_ingester finished successfully
+      upserting → request sent to qdrant-ingester
+      indexed  → qdrant-ingester finished successfully
       error    → processing failed; see error_message for details
+
+    inline_text:
+      Set only when the file is small enough to fit within INLINE_THRESHOLD tokens.
+      In that case the full document text is stored here and Qdrant upsert is skipped.
+      NULL means the file was chunked and indexed in Qdrant normally.
     """
     __tablename__ = "files"
 
@@ -36,6 +41,7 @@ class File(Base):
     size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     status: Mapped[str] = mapped_column(String(32), index=True, default="pending")
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    inline_text: Mapped[str | None] = mapped_column(Text, nullable=True)  # set for small files only
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -66,7 +72,6 @@ class TraceRecord(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[str] = mapped_column(String(255), index=True)
-    # F3 — correlate all trace rows belonging to one user turn
     request_id: Mapped[str] = mapped_column(String(64), index=True)
     step_name: Mapped[str] = mapped_column(String(128), index=True)
     input_text: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -76,7 +81,6 @@ class TraceRecord(Base):
     latency_ms: Mapped[int] = mapped_column(Integer, nullable=False)
     estimated_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
-    # F8 — queryable top-level analytics columns (no JSONB path queries needed)
     route_decision: Mapped[str | None] = mapped_column(String(32), index=True, nullable=True)
     model_used: Mapped[str | None] = mapped_column(String(128), index=True, nullable=True)
     rejection_reason: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)

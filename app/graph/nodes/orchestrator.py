@@ -31,27 +31,48 @@ _JSON_REMINDER = (
 
 
 def _uploaded_files_reminder(uploaded_files: list[dict]) -> str:
-    """Build a strong inline reminder injected right before the JSON payload.
+    """Build an inline instruction block injected directly into user_content.
 
-    Placed directly above the payload so the model reads it immediately before
-    deciding what to do — prevents it from missing the instruction buried in a
-    long system prompt.
+    - If a file has inline_text: the full document text is embedded here;
+      the model MUST answer directly without calling any tool.
+    - If inline_text is absent/None: the file is chunked in Qdrant;
+      the model MUST call document_searcher with the file_id.
     """
     if not uploaded_files:
         return ""
-    lines = [
-        "\n\n[UPLOADED FILES — ACTION REQUIRED]",
-        "The user has attached the following file(s), already indexed in the vector database:",
-    ]
-    for f in uploaded_files:
-        lines.append(f'  - filename: "{f["filename"]}"  file_id: "{f["file_id"]}"')
-    lines += [
-        "You MUST call `document_searcher` with:",
-        '  "query": <the user\'s question>',
-        '  "file_id": <the file_id above>',
-        "Do NOT ask the user to clarify. Do NOT respond without calling document_searcher first.",
-        "[END UPLOADED FILES]",
-    ]
+
+    inline_files = [f for f in uploaded_files if f.get("inline_text")]
+    qdrant_files = [f for f in uploaded_files if not f.get("inline_text")]
+
+    lines = ["\n\n[UPLOADED FILES — ACTION REQUIRED]"]
+
+    if inline_files:
+        lines.append(
+            "The following file(s) are SMALL enough to be provided in full. "
+            "Their complete text is included below. "
+            "Answer the user's question directly using this text. "
+            "Do NOT call any tool."
+        )
+        for f in inline_files:
+            lines.append(f'\n--- FILE: "{f["filename"]}" ---')
+            lines.append(f["inline_text"].strip())
+            lines.append(f'--- END OF FILE: "{f["filename"]}" ---')
+
+    if qdrant_files:
+        lines.append(
+            "\nThe following file(s) are indexed in the vector database. "
+            "You MUST call `document_searcher` for each one to answer the user's question."
+        )
+        for f in qdrant_files:
+            lines.append(f'  - filename: "{f["filename"]}"  file_id: "{f["file_id"]}"')
+        lines += [
+            "Call `document_searcher` with:",
+            '  "query": <the user\'s question>',
+            '  "file_id": <the file_id above>',
+            "Do NOT ask the user to clarify. Do NOT respond without calling document_searcher first.",
+        ]
+
+    lines.append("[END UPLOADED FILES]")
     return "\n".join(lines)
 
 
@@ -171,11 +192,6 @@ def _build_unknown_tool_error_step(
     unknown_names: list[str],
     known_tools: list[str],
 ) -> dict[str, Any]:
-    """Synthetic intermediate step that tells the model it used a nonexistent tool.
-
-    Returned as a fake completed step so that on the next orchestrator pass
-    the model sees its mistake in last_tool_results and self-corrects.
-    """
     return {
         "tool_calls": [{"tool": name, "arguments": {}} for name in unknown_names],
         "results": [
@@ -205,7 +221,6 @@ class OrchestratorNode:
         result = []
         for registry in self.tool_registries:
             result.extend(registry.describe_for_model())
-            
         return result
 
     async def action(self, state: AssistantState) -> dict[str, Any]:
@@ -255,15 +270,23 @@ class OrchestratorNode:
             "intermediate_steps": formatted_steps,
             "last_tool_results": last_tool_results,
             "tool_retry_count": state.get("tool_retry_count", 0),
-            "uploaded_files": uploaded_files,
+            "uploaded_files": [
+                # strip inline_text from payload JSON to avoid bloating it twice
+                # (the text is already injected via files_reminder above the payload)
+                {k: v for k, v in f.items() if k != "inline_text"}
+                for f in uploaded_files
+            ],
         }
 
         log.debug(
-            "[%s] orchestrator payload intermediate_steps=%d last_tool_results=%d uploaded_files=%d",
+            "[%s] orchestrator payload intermediate_steps=%d last_tool_results=%d "
+            "uploaded_files=%d (inline=%d qdrant=%d)",
             state["request_id"],
             len(formatted_steps),
             len(last_tool_results),
             len(uploaded_files),
+            sum(1 for f in uploaded_files if f.get("inline_text")),
+            sum(1 for f in uploaded_files if not f.get("inline_text")),
         )
 
         async with trace(
@@ -285,9 +308,6 @@ class OrchestratorNode:
                 + json.dumps(tool_descriptions, ensure_ascii=False)
             )
 
-            # Inline reminder injected right before the payload so the model
-            # reads it immediately — critical for smaller models that lose
-            # instructions buried deep in a long system prompt.
             files_reminder = _uploaded_files_reminder(uploaded_files)
             user_content = (
                 files_reminder
@@ -318,7 +338,6 @@ class OrchestratorNode:
             parsed_raw = _parse_json_object(content)
             parsed = _sanitize_llm_output(parsed_raw, user_message)
 
-            # --- Filter unknown tool calls ---
             known_tools_set = set(tool_names)
             valid_calls = [tc for tc in parsed["tool_calls"] if tc["tool"] in known_tools_set]
             unknown_calls = [tc["tool"] for tc in parsed["tool_calls"] if tc["tool"] not in known_tools_set]
@@ -328,7 +347,6 @@ class OrchestratorNode:
 
             parsed["tool_calls"] = valid_calls
 
-            # --- Unknown tools: inject error step back into state so model can self-correct ---
             if parsed["action"] == "tools" and not valid_calls and unknown_calls:
                 log.warning(
                     "[%s] All tool calls unknown — injecting error feedback into steps (unknown=%s)",
