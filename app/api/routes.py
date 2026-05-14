@@ -91,9 +91,33 @@ def _sanitize_filename(name: str) -> str:
     return name or "file"
 
 
-def _uploaded_files_to_dicts(uploaded_files) -> list[dict[str, str]]:
-    """Convert list of UploadedFile pydantic models to plain dicts for state."""
-    return [{"file_id": f.file_id, "filename": f.filename} for f in uploaded_files]
+async def _enrich_uploaded_files(uploaded_files) -> list[dict]:
+    """Fetch inline_text from DB for each uploaded file.
+
+    Client only sends file_id + filename. inline_text is resolved server-side
+    so the orchestrator can decide whether to use inline text or call document_searcher.
+    """
+    if not uploaded_files:
+        return []
+
+    file_ids = [uuid.UUID(f.file_id) for f in uploaded_files]
+
+    async with get_session_maker()() as session:
+        stmt = select(
+            FileModel.id,
+            FileModel.inline_text,
+        ).where(FileModel.id.in_(file_ids))
+        result = await session.execute(stmt)
+        inline_map = {str(row.id): row.inline_text for row in result.fetchall()}
+
+    return [
+        {
+            "file_id": f.file_id,
+            "filename": f.filename,
+            "inline_text": inline_map.get(f.file_id),
+        }
+        for f in uploaded_files
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -113,11 +137,12 @@ async def chat(
 ) -> ChatResponse:
     request_id = getattr(request.state, "request_id", None) or uuid4().hex
     runtime = get_runtime(request)
+    enriched_files = await _enrich_uploaded_files(payload.uploaded_files)
     state = runtime.build_initial_state(
         user_id=payload.user_id,
         message=payload.message,
         request_id=request_id,
-        uploaded_files=_uploaded_files_to_dicts(payload.uploaded_files),
+        uploaded_files=enriched_files,
     )
     result = await runtime.run(state)
     answer = result.get("final_answer", "")
@@ -143,12 +168,13 @@ async def stream(
     request_id = getattr(request.state, "request_id", None) or uuid4().hex
     runtime = get_runtime(request)
     queue: asyncio.Queue[str] = asyncio.Queue()
+    enriched_files = await _enrich_uploaded_files(payload.uploaded_files)
     initial_state = runtime.build_initial_state(
         user_id=payload.user_id,
         message=payload.message,
         request_id=request_id,
         status_queue=queue,
-        uploaded_files=_uploaded_files_to_dicts(payload.uploaded_files),
+        uploaded_files=enriched_files,
     )
 
     async def event_stream() -> AsyncGenerator[str, None]:
