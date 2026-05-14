@@ -5,6 +5,7 @@ import json
 import logging
 import re
 import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import AsyncGenerator
 from uuid import uuid4
@@ -15,7 +16,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.security import APIKeyHeader
 from sqlalchemy import select
 
-from app.api.schemas import ChatRequest, ChatResponse
+from app.api.schemas import ChatRequest, ChatResponse, UploadedFile
 from app.core.config import Settings
 from app.db.models import File as FileModel
 from app.db.session import get_session_maker
@@ -120,6 +121,46 @@ async def _enrich_uploaded_files(uploaded_files) -> list[dict]:
     ]
 
 
+async def _auto_attach_recent_files(user_id: str, minutes: int) -> list[UploadedFile]:
+    """Find the user's recently indexed files and return them as UploadedFile list.
+
+    When the client does not explicitly pass uploaded_files, this fallback queries
+    the database for files belonging to this user that were successfully indexed
+    within the last ``minutes`` minutes.  This allows the system to automatically
+    associate a previously uploaded file with the current chat request.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=minutes)
+
+    async with get_session_maker()() as session:
+        stmt = (
+            select(FileModel.id, FileModel.original_name)
+            .where(
+                FileModel.user_id == user_id,
+                FileModel.status == "indexed",
+                FileModel.created_at >= cutoff,
+            )
+            .order_by(FileModel.created_at.desc())
+        )
+        result = await session.execute(stmt)
+        rows = result.fetchall()
+
+    if not rows:
+        return []
+
+    files = [
+        UploadedFile(file_id=str(row.id), filename=row.original_name)
+        for row in rows
+    ]
+    logger.info(
+        "Auto-attached %d recent file(s) for user %s (window=%d min): %s",
+        len(files),
+        user_id,
+        minutes,
+        [f.file_id for f in files],
+    )
+    return files
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -135,8 +176,17 @@ async def chat(
     request: Request,
     api_key: str = Depends(get_api_key),
 ) -> ChatResponse:
+    settings: Settings = request.app.state.settings
     logger.info("CHAT uploaded_files: %s", payload.uploaded_files)
-    enriched_files = await _enrich_uploaded_files(payload.uploaded_files)
+
+    # Auto-attach recent files if the client didn't pass any.
+    uploaded_files = payload.uploaded_files
+    if not uploaded_files and settings.FILE_AUTO_ATTACH_MINUTES > 0:
+        uploaded_files = await _auto_attach_recent_files(
+            payload.user_id, settings.FILE_AUTO_ATTACH_MINUTES
+        )
+
+    enriched_files = await _enrich_uploaded_files(uploaded_files)
     logger.info("CHAT enriched_files: %s", enriched_files)
     request_id = getattr(request.state, "request_id", None) or uuid4().hex
     runtime = get_runtime(request)
@@ -167,10 +217,19 @@ async def stream(
     request: Request,
     api_key: str = Depends(get_api_key),
 ) -> StreamingResponse:
+    settings: Settings = request.app.state.settings
     request_id = getattr(request.state, "request_id", None) or uuid4().hex
     runtime = get_runtime(request)
     queue: asyncio.Queue[str] = asyncio.Queue()
-    enriched_files = await _enrich_uploaded_files(payload.uploaded_files)
+
+    # Auto-attach recent files if the client didn't pass any.
+    uploaded_files = payload.uploaded_files
+    if not uploaded_files and settings.FILE_AUTO_ATTACH_MINUTES > 0:
+        uploaded_files = await _auto_attach_recent_files(
+            payload.user_id, settings.FILE_AUTO_ATTACH_MINUTES
+        )
+
+    enriched_files = await _enrich_uploaded_files(uploaded_files)
     initial_state = runtime.build_initial_state(
         user_id=payload.user_id,
         message=payload.message,

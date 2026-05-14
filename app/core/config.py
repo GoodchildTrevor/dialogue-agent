@@ -25,6 +25,11 @@ class Settings(BaseSettings):
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     ]
 
+    # When uploaded_files is empty in a chat/stream request, automatically attach
+    # the user's recently indexed files (created within this many minutes).
+    # Set to 0 to disable auto-attach.
+    FILE_AUTO_ATTACH_MINUTES: int = 30
+
     LLM_BASE_URL: str
     ROUTER_MODEL: str
     REASONING_MODEL: str
