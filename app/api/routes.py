@@ -137,10 +137,9 @@ async def chat(
 ) -> ChatResponse:
     logger.info("CHAT uploaded_files: %s", payload.uploaded_files)
     enriched_files = await _enrich_uploaded_files(payload.uploaded_files)
-    logger.info("CHAT enriched_files: %s", enriched_files) 
+    logger.info("CHAT enriched_files: %s", enriched_files)
     request_id = getattr(request.state, "request_id", None) or uuid4().hex
     runtime = get_runtime(request)
-    enriched_files = await _enrich_uploaded_files(payload.uploaded_files)
     state = runtime.build_initial_state(
         user_id=payload.user_id,
         message=payload.message,

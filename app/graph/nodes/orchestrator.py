@@ -280,13 +280,14 @@ class OrchestratorNode:
 
         log.debug(
             "[%s] orchestrator payload intermediate_steps=%d last_tool_results=%d "
-            "uploaded_files=%d (inline=%d qdrant=%d)",
+            "uploaded_files=%d (inline=%d qdrant=%d) file_ids=%s",
             state["request_id"],
             len(formatted_steps),
             len(last_tool_results),
             len(uploaded_files),
             sum(1 for f in uploaded_files if f.get("inline_text")),
             sum(1 for f in uploaded_files if not f.get("inline_text")),
+            [f.get("file_id") for f in uploaded_files],
         )
 
         async with trace(
