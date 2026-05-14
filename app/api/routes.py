@@ -107,6 +107,11 @@ def _sanitize_filename(name: str) -> str:
     return name or "file"
 
 
+def _uploaded_files_to_dicts(uploaded_files) -> list[dict[str, str]]:
+    """Convert list of UploadedFile pydantic models to plain dicts for state."""
+    return [{"file_id": f.file_id, "filename": f.filename} for f in uploaded_files]
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -128,6 +133,7 @@ async def chat(
         user_id=payload.user_id,
         message=payload.message,
         request_id=request_id,
+        uploaded_files=_uploaded_files_to_dicts(payload.uploaded_files),
     )
     result = await runtime.run(state)
     answer = result.get("final_answer", "")
@@ -158,14 +164,12 @@ async def stream(
         message=payload.message,
         request_id=request_id,
         status_queue=queue,
+        uploaded_files=_uploaded_files_to_dicts(payload.uploaded_files),
     )
 
     async def event_stream() -> AsyncGenerator[str, None]:
         task = asyncio.create_task(runtime.run(initial_state))
         try:
-            # Drain the status queue in real-time while the graph runs.
-            # Each status message is flushed immediately as a plain SSE data
-            # frame so the client sees it without any buffering.
             while True:
                 if task.done() and queue.empty():
                     break
@@ -191,7 +195,6 @@ async def stream(
                 )
             )
 
-            # Final answer frame followed by the SSE stream sentinel.
             yield _sse({"answer": answer})
             yield "data: [DONE]\n\n"
 
@@ -233,7 +236,6 @@ async def upload_files(
             while chunk := await upload.read(1024 * 1024):
                 size_bytes += len(chunk)
                 if size_bytes > max_bytes:
-                    # Clean up partial file and abort
                     await f.close()
                     path.unlink(missing_ok=True)
                     raise HTTPException(413, f"{upload.filename} exceeds size limit")
@@ -252,7 +254,7 @@ async def upload_files(
         asyncio.create_task(
             request.app.state.file_ingestion.process(file_id)
         )
-        results.append({"file_id": str(file_id), "status": "pending"})
+        results.append({"file_id": str(file_id), "filename": safe_name, "status": "pending"})
 
     return JSONResponse({"files": results})
 

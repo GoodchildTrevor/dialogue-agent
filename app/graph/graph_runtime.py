@@ -170,6 +170,7 @@ class GraphRuntime:
         message: str,
         request_id: str,
         status_queue: asyncio.Queue[str] | None = None,
+        uploaded_files: list[dict[str, str]] | None = None,
     ) -> AssistantState:
         return {
             "messages": [{"role": "user", "content": message}],
@@ -180,6 +181,7 @@ class GraphRuntime:
             "is_complex_task": False,
             "tool_retry_count": 0,
             "status_queue": status_queue,
+            "uploaded_files": uploaded_files or [],
         }
 
     async def run(self, state: AssistantState) -> AssistantState:
@@ -220,8 +222,6 @@ class GraphRuntime:
         graph.add_conditional_edges(
             "orchestrator",
             after_orchestrator,
-            # "orchestrator" entry allows the fallback/_fallback() path to loop back
-            # without a KeyError when next_action="orchestrator" is returned.
             {"end": END, "tools": "tools", "reasoning": "reasoning", "orchestrator": "orchestrator"},
         )
         graph.add_conditional_edges(

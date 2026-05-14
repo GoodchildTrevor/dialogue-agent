@@ -31,3 +31,4 @@ class AssistantState(TypedDict, total=False):
     last_tool_error: dict[str, Any] | None
     tool_retry_count: int
     status_queue: asyncio.Queue[str] | None
+    uploaded_files: list[dict[str, str]] | None  # [{"file_id": "...", "filename": "..."}]

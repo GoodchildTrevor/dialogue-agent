@@ -228,13 +228,15 @@ class OrchestratorNode:
             "intermediate_steps": formatted_steps,
             "last_tool_results": last_tool_results,
             "tool_retry_count": state.get("tool_retry_count", 0),
+            "uploaded_files": state.get("uploaded_files") or [],
         }
 
         log.debug(
-            "[%s] orchestrator payload intermediate_steps=%d last_tool_results=%d",
+            "[%s] orchestrator payload intermediate_steps=%d last_tool_results=%d uploaded_files=%d",
             state["request_id"],
             len(formatted_steps),
             len(last_tool_results),
+            len(payload["uploaded_files"]),
         )
 
         async with trace(
@@ -300,7 +302,7 @@ class OrchestratorNode:
                 error_step = _build_unknown_tool_error_step(unknown_calls, tool_names)
                 t.output = {"action": "tool_name_error", "unknown": unknown_calls}
                 return {
-                    "intermediate_steps": [error_step],  # operator.add сам добавит к существующим
+                    "intermediate_steps": [error_step],
                     "next_action": "orchestrator",
                 }
 
