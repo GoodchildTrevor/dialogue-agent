@@ -30,6 +30,31 @@ _JSON_REMINDER = (
 )
 
 
+def _uploaded_files_reminder(uploaded_files: list[dict]) -> str:
+    """Build a strong inline reminder injected right before the JSON payload.
+
+    Placed directly above the payload so the model reads it immediately before
+    deciding what to do — prevents it from missing the instruction buried in a
+    long system prompt.
+    """
+    if not uploaded_files:
+        return ""
+    lines = [
+        "\n\n[UPLOADED FILES — ACTION REQUIRED]",
+        "The user has attached the following file(s), already indexed in the vector database:",
+    ]
+    for f in uploaded_files:
+        lines.append(f'  - filename: "{f["filename"]}"  file_id: "{f["file_id"]}"')
+    lines += [
+        "You MUST call `document_searcher` with:",
+        '  "query": <the user\'s question>',
+        '  "file_id": <the file_id above>',
+        "Do NOT ask the user to clarify. Do NOT respond without calling document_searcher first.",
+        "[END UPLOADED FILES]",
+    ]
+    return "\n".join(lines)
+
+
 def _safe_json_loads(val: Any) -> Any:
     if isinstance(val, str):
         try:
@@ -221,6 +246,8 @@ class OrchestratorNode:
         tool_descriptions = self._all_tool_descriptions()
         tool_names = [t["name"] for t in tool_descriptions if isinstance(t, dict) and "name" in t]
 
+        uploaded_files = state.get("uploaded_files") or []
+
         payload = {
             "message": user_message,
             "recent_messages": recent_messages,
@@ -228,7 +255,7 @@ class OrchestratorNode:
             "intermediate_steps": formatted_steps,
             "last_tool_results": last_tool_results,
             "tool_retry_count": state.get("tool_retry_count", 0),
-            "uploaded_files": state.get("uploaded_files") or [],
+            "uploaded_files": uploaded_files,
         }
 
         log.debug(
@@ -236,7 +263,7 @@ class OrchestratorNode:
             state["request_id"],
             len(formatted_steps),
             len(last_tool_results),
-            len(payload["uploaded_files"]),
+            len(uploaded_files),
         )
 
         async with trace(
@@ -258,7 +285,16 @@ class OrchestratorNode:
                 + json.dumps(tool_descriptions, ensure_ascii=False)
             )
 
-            user_content = json.dumps(_make_json_safe(payload), ensure_ascii=False) + _JSON_REMINDER
+            # Inline reminder injected right before the payload so the model
+            # reads it immediately — critical for smaller models that lose
+            # instructions buried deep in a long system prompt.
+            files_reminder = _uploaded_files_reminder(uploaded_files)
+            user_content = (
+                files_reminder
+                + "\n\n"
+                + json.dumps(_make_json_safe(payload), ensure_ascii=False)
+                + _JSON_REMINDER
+            )
 
             try:
                 response = await self.llm_client.chat(
