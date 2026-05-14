@@ -9,7 +9,6 @@ from sqlalchemy import ARRAY, DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
-# Qwen3-Embedding-0.6B output dimension
 _EMBEDDING_DIM = 1024
 
 
