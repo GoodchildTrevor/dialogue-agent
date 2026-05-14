@@ -24,6 +24,8 @@ class FileIngestionService:
     1. Load file record from PG
     2. Update status to 'upserting'
     3. Send to qdrant-ingester (chunking + embedding happens there)
+       - If INLINE_THRESHOLD is set and document is small enough,
+         qdrant-ingester returns raw text instead of ingesting.
     4. Update status to 'indexed'
     On exception: Update status to 'error' with error message
     """
@@ -68,11 +70,19 @@ class FileIngestionService:
                 chunk_size=self.settings.CHUNK_SIZE,
                 overlap=self.settings.OVERLAP,
                 extra_payload={"user_id": db_file.user_id},
+                inline_threshold=self.settings.INLINE_THRESHOLD,
             )
 
             if ingest_response.get("status") == "failed":
                 raise RuntimeError(
                     ingest_response.get("message", "Ingestion failed")
+                )
+
+            if ingest_response.get("inline_text"):
+                logger.info(
+                    "File %s returned as inline text (%d tokens), skipped Qdrant upsert.",
+                    file_id,
+                    ingest_response.get("token_count", 0),
                 )
 
             async with get_session_maker()() as session:

@@ -19,23 +19,24 @@ class QdrantIngesterClient:
         file_path: str,
         chunk_size: int = 512,
         overlap: int = 1,
-        extra_payload: Optional[dict] = None
+        extra_payload: Optional[dict] = None,
+        inline_threshold: Optional[int] = None,
     ) -> dict:
+        payload = {
+            "collection": collection,
+            "file_path": file_path,
+            "chunk_size": chunk_size,
+            "overlap": overlap,
+            "extra_payload": extra_payload,
+        }
+        if inline_threshold is not None:
+            payload["inline_threshold"] = inline_threshold
+
         async with httpx.AsyncClient(timeout=300) as client:
             response = await client.post(
                 f"{self.base_url}/ingest",
-                headers={
-                    "X-API-Key": self.api_key,
-                },
-                json={
-                    "collection": collection,
-                    "file_path": file_path,
-                    "chunk_size": chunk_size,
-                    "overlap": overlap,
-                    "extra_payload": extra_payload
-                },
+                headers={"X-API-Key": self.api_key},
+                json=payload,
             )
-
             response.raise_for_status()
             return response.json()
-        

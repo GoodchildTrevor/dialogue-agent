@@ -44,6 +44,11 @@ class Settings(BaseSettings):
     CHUNK_SIZE: int = 512
     OVERLAP: int = 50
 
+    # If set, documents with token_count <= INLINE_THRESHOLD are returned as
+    # raw text instead of being ingested into Qdrant.
+    # Set to 0 or leave unset to always ingest.
+    INLINE_THRESHOLD: int | None = None
+
     # Embedding (in-process via fastembed)
     EMBEDDING_MODEL_NAME: str
     EMBEDDING_BATCH_SIZE: int
