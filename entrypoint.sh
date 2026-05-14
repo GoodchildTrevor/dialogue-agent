@@ -18,6 +18,7 @@ asyncio.run(check())
 done
 
 echo "Running Alembic migrations..."
+alembic revision --autogenerate -m "auto"
 alembic upgrade head
 
 echo "Starting application..."
