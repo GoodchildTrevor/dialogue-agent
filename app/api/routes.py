@@ -198,6 +198,7 @@ async def chat(
     )
     result = await runtime.run(state)
     answer = result.get("final_answer", "")
+    images = result.get("images", [])
 
     asyncio.create_task(
         _save_and_embed(
@@ -208,7 +209,7 @@ async def chat(
         )
     )
 
-    return ChatResponse(answer=answer)
+    return ChatResponse(answer=answer, images=images)
 
 
 @router.post("/stream")
@@ -256,6 +257,7 @@ async def stream(
 
             result = await task
             answer = result.get("final_answer", "")
+            images = result.get("images", [])
 
             asyncio.create_task(
                 _save_and_embed(
@@ -266,7 +268,7 @@ async def stream(
                 )
             )
 
-            yield _sse({"answer": answer})
+            yield _sse({"answer": answer, "images": images})
             yield "data: [DONE]\n\n"
 
         except Exception as exc:

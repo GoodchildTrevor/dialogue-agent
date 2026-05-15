@@ -31,39 +31,53 @@ class ToolContext:
     emit_status: Callable[[str], Awaitable[None]] | None = None
 
 
-def _normalize_content(content: Any) -> str:
-    """Normalise MCP tool output to a plain string.
+def _normalize_content(content: Any) -> tuple[str, list[dict[str, str]]]:
+    """Normalise MCP tool output to a plain string and separate images.
 
     fastmcp may return content as a list of TextContent objects, a single
     object with a ``text`` attribute, a plain string, or a dict.  This
-    helper collapses all of those shapes into a single UTF-8 string so the
-    orchestrator LLM always receives something it can read.
+    helper separates text content from image data so images can be handled
+    separately while the orchestrator LLM receives readable text.
 
     :param content: Raw content returned by the MCP client.
-    :returns: A string representation of the content.
+    :returns: A tuple of (text_content: str, images: list[dict]).
     """
+    text_parts: list[str] = []
+    images: list[dict[str, str]] = []
+
+    def _process_item(item: Any) -> None:
+        if isinstance(item, str):
+            text_parts.append(item)
+        elif isinstance(item, dict):
+            if item.get("type") == "image":
+                images.append({
+                    "mime_type": item.get("mimeType", "image/png"),
+                    "data": item.get("data", "")
+                })
+                text_parts.append(f"[IMAGE:{len(images)}]")
+            else:
+                text_parts.append(item.get("text", str(item)))
+        else:
+            text = getattr(item, "text", None)
+            if text is not None:
+                text_parts.append(str(text))
+            else:
+                text_parts.append(str(item))
+
     if isinstance(content, str):
-        return content
+        return content, []
 
     if isinstance(content, list):
-        parts: list[str] = []
         for item in content:
-            if isinstance(item, dict):
-                parts.append(item.get("text", str(item)))
-            else:
-                parts.append(getattr(item, "text", str(item)))
-        return "\n".join(parts)
+            _process_item(item)
+        return "\n".join(text_parts), images
 
     if isinstance(content, dict):
-        if content.get("type") == "image":
-            return f"[IMAGE:base64:{content.get('mimeType','image/png')}:{content.get('data','')}]"
-        return content.get("text", str(content))
+        _process_item(content)
+        return "\n".join(text_parts), images
 
-    text = getattr(content, "text", None)
-    if text is not None:
-        return str(text)
-
-    return str(content)
+    _process_item(content)
+    return "\n".join(text_parts), images
 
 
 class ToolRegistry:
@@ -229,16 +243,23 @@ class ToolRegistry:
             else:
                 raw_content = getattr(raw, "content", raw)
 
-            # Collapse all possible content shapes into a plain UTF-8 string so
-            # the orchestrator LLM always receives something it can read directly.
-            content: str = _normalize_content(raw_content)
+            # Separate text content from images so images can be handled separately
+            # while the orchestrator LLM receives readable text.
+            text_content: str
+            image_data: list[dict[str, str]]
+            text_content, image_data = _normalize_content(raw_content)
 
-            logger.debug("Tool %s result (preview): %.300s", tool_name, content)
+            logger.debug("Tool %s result (preview): %.300s", tool_name, text_content)
+
+            # Accumulate images in the state
+            existing_images = context.state.get("images", [])
+            updated_images = existing_images + image_data
+            context.state["images"] = updated_images
 
             return {
                 "tool": tool_name,
                 "ok": True,
-                "result": {"content": content},
+                "result": {"content": text_content},
             }
 
         except Exception as e:

@@ -12,5 +12,11 @@ class ChatRequest(BaseModel):
     uploaded_files: list[UploadedFile] = Field(default_factory=list)
 
 
+class ImageData(BaseModel):
+    mime_type: str
+    data: str  # base64
+
+
 class ChatResponse(BaseModel):
     answer: str
+    images: list[ImageData] = Field(default_factory=list)
