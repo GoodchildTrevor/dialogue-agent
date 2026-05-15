@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 from typing import Any
 
 from app.core.tracing import trace
@@ -97,11 +98,44 @@ class ToolExecutorNode():
 
         new_step = {"tool_calls": tool_calls, "results": results}
 
-        # Collect images from successful tool results
+        # Collect images from successful tool results.
+        # Backwards-compat: some tools return a structured {'images': [...]}
+        # while others embed an image payload in the `content` string
+        # (e.g. "Generated image... type='image' data='iVBOR...'").
+        # Parse both formats and assemble a unified images list.
         new_images: list[dict[str, str]] = []
+        img_pattern = re.compile(r"data=['\"]([A-Za-z0-9+/=]+)['\"]")
         for r in results:
-            if r.get("ok"):
-                new_images.extend(r.get("result", {}).get("images", []))
+            if not r.get("ok"):
+                continue
+            res = r.get("result") or {}
+
+            # If tool returned an explicit images list, use it.
+            if isinstance(res, dict) and res.get("images"):
+                try:
+                    new_images.extend(res.get("images", []))
+                    continue
+                except Exception:
+                    # fall through to content parsing
+                    pass
+
+            # Otherwise try to extract base64 payload from textual content.
+            content = ""
+            if isinstance(res, dict):
+                content = res.get("content", "") or ""
+            elif isinstance(res, str):
+                content = res
+
+            if isinstance(content, str) and (
+                "type='image'" in content
+                or 'type="image"' in content
+                or "data='iVBOR" in content
+                or 'data="iVBOR' in content
+                or content.startswith("iVBOR")
+            ):
+                m = img_pattern.search(content)
+                if m:
+                    new_images.append({"data": m.group(1), "mime_type": "image/png"})
 
         logger.debug(
             "[%s] tool_executor: appending step with %d call(s), %d error(s)",
