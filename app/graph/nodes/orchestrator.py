@@ -161,6 +161,17 @@ def _sanitize_llm_output(parsed: Any, fallback_task: str) -> dict:
     }
 
 
+def _sanitize_tool_content(content: str, tool_name: str) -> str:
+    """Strip large binary payloads (e.g. base64 images) before sending to LLM."""
+    if isinstance(content, str) and (
+        "type='image'" in content
+        or "data='iVBOR" in content
+        or content.startswith("iVBOR")
+    ):
+        return f"[Image generated successfully by '{tool_name}'. The result has been delivered to the user.]"
+    return content
+
+
 def _format_intermediate_steps(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
     formatted = []
     for step in steps:
@@ -183,7 +194,12 @@ def _format_intermediate_steps(steps: list[dict[str, Any]]) -> list[dict[str, An
                     content = str(raw_result)
                 if not isinstance(content, str):
                     content = json.dumps(_make_json_safe(content), ensure_ascii=False)
-                formatted_results.append({"ok": True, "tool": r.get("tool", ""), "content": content})
+                tool_name = r.get("tool", "")
+                formatted_results.append({
+                    "ok": True,
+                    "tool": tool_name,
+                    "content": _sanitize_tool_content(content, tool_name),
+                })
         formatted.append({"tool_calls": calls, "results": formatted_results})
     return formatted
 
