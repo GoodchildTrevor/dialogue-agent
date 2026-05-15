@@ -97,6 +97,12 @@ class ToolExecutorNode():
 
         new_step = {"tool_calls": tool_calls, "results": results}
 
+        # Collect images from successful tool results
+        new_images: list[dict[str, str]] = []
+        for r in results:
+            if r.get("ok"):
+                new_images.extend(r.get("result", {}).get("images", []))
+
         logger.debug(
             "[%s] tool_executor: appending step with %d call(s), %d error(s)",
             state["request_id"],
@@ -109,6 +115,7 @@ class ToolExecutorNode():
             "tool_results": results,
             "pending_tool_calls": [],
             "context": {**state.get("context", {}), "tool_results": results},
+            "images": new_images,
         }
         if errors:
             retries = state.get("tool_retry_count", 0) + 1

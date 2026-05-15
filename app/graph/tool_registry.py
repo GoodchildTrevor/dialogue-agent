@@ -218,7 +218,7 @@ class ToolRegistry:
             and an optional status emitter.
         :returns: A dictionary describing the outcome of the invocation.
             On success the ``ok`` key is ``True`` and ``result`` holds
-            ``{"content": <str>}``.  On failure ``ok`` is ``False`` and
+            ``{"content": <str>, "images": <list[dict]>}``.  On failure ``ok`` is ``False`` and
             ``error`` contains a ``message`` describing the problem.
         """
         if tool_name not in self._tools:
@@ -251,15 +251,13 @@ class ToolRegistry:
 
             logger.debug("Tool %s result (preview): %.300s", tool_name, text_content)
 
-            # Accumulate images in the state
-            existing_images = context.state.get("images", [])
-            updated_images = existing_images + image_data
-            context.state["images"] = updated_images
-
             return {
                 "tool": tool_name,
                 "ok": True,
-                "result": {"content": text_content},
+                "result": {
+                    "content": text_content,
+                    "images": image_data,
+                },
             }
 
         except Exception as e:

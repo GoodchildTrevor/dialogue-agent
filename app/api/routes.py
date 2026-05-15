@@ -198,7 +198,7 @@ async def chat(
     )
     result = await runtime.run(state)
     answer = result.get("final_answer", "")
-    images = result.get("images", [])
+    images = result.get("images") or []
 
     asyncio.create_task(
         _save_and_embed(
@@ -257,7 +257,7 @@ async def stream(
 
             result = await task
             answer = result.get("final_answer", "")
-            images = result.get("images", [])
+            images = result.get("images") or []
 
             asyncio.create_task(
                 _save_and_embed(
