@@ -18,7 +18,9 @@ asyncio.run(check())
 done
 
 echo "Running Alembic migrations..."
-alembic revision --autogenerate -m "auto"
+# Stamp the database with the current head revision to handle missing migration history
+alembic stamp head
+# Then run any pending migrations
 alembic upgrade head
 
 echo "Starting application..."
