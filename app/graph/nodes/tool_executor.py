@@ -114,7 +114,7 @@ class ToolExecutorNode():
             "intermediate_steps": [new_step],
             "tool_results": results,
             "pending_tool_calls": [],
-            "context": {**state.get("context", {}), "tool_results": results},
+            "context": state.get("context", {}),
             "images": new_images,
         }
         if errors:

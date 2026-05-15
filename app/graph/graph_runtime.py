@@ -182,6 +182,7 @@ class GraphRuntime:
             "tool_retry_count": 0,
             "status_queue": status_queue,
             "uploaded_files": uploaded_files or [],
+            "images": [],
         }
 
     async def run(self, state: AssistantState) -> AssistantState:

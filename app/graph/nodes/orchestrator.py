@@ -165,7 +165,9 @@ def _sanitize_tool_content(content: str, tool_name: str) -> str:
     """Strip large binary payloads (e.g. base64 images) before sending to LLM."""
     if isinstance(content, str) and (
         "type='image'" in content
+        or 'type="image"' in content
         or "data='iVBOR" in content
+        or 'data="iVBOR' in content
         or content.startswith("iVBOR")
     ):
         return f"[Image generated successfully by '{tool_name}'. The result has been delivered to the user.]"

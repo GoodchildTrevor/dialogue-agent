@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any, Callable, Awaitable
 
@@ -65,6 +66,13 @@ def _normalize_content(content: Any) -> tuple[str, list[dict[str, str]]]:
                 text_parts.append(str(item))
 
     if isinstance(content, str):
+        # Check for inline image data embedded in a string (e.g. from MCP text serialization)
+        if re.search(r"type\s*=?\s*['\"]image['\"]", content, re.IGNORECASE):
+            data_matches = list(re.finditer(r"data\s*=\s*['\"]([A-Za-z0-9+/=]+)['\"]", content))
+            if data_matches:
+                images = [{"mime_type": "image/png", "data": m.group(1)} for m in data_matches]
+                text_content = re.sub(r"data\s*=\s*['\"][A-Za-z0-9+/=]+['\"]", "[IMAGE DATA]", content)
+                return text_content, images
         return content, []
 
     if isinstance(content, list):
