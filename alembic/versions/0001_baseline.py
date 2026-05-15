@@ -43,6 +43,12 @@ def upgrade() -> None:
     op.execute("CREATE INDEX IF NOT EXISTS ix_files_status   ON files (status)")
     op.execute("CREATE INDEX IF NOT EXISTS ix_files_created_at ON files (created_at)")
 
+    # inline_text added here (idempotent) so that existing DBs stamped at 0001
+    # already have the column before 0002 runs.
+    op.execute("""
+        ALTER TABLE files ADD COLUMN IF NOT EXISTS inline_text TEXT
+    """)
+
     # --------------------------------------------------------------- messages
     op.execute("""
         CREATE TABLE IF NOT EXISTS messages (

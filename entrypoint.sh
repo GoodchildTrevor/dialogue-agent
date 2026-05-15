@@ -18,8 +18,12 @@ asyncio.run(check())
 done
 
 echo "Running Alembic migrations..."
+<<<<<<< HEAD
 alembic revision --autogenerate -m "auto"
 alembic upgrade head
+=======
+alembic upgrade heads
+>>>>>>> fb02e2727c471c404314851fd61c0665f58b1b08
 
 echo "Starting application..."
 exec uvicorn app.main:app --host 0.0.0.0 --port 8000
