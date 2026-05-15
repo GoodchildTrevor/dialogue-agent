@@ -394,9 +394,13 @@ class OrchestratorNode:
         )
 
         if parsed["action"] == "respond":
+            # Include any images collected in the state so they are passed
+            # through to the final result (the streaming endpoint and
+            # non-streaming /chat endpoint expect an `images` list).
             return {
                 "final_answer": parsed["answer"],
                 "next_action": "end",
+                "images": state.get("images", []),
             }
 
         if parsed["action"] == "tools":
