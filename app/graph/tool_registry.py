@@ -261,9 +261,28 @@ class ToolRegistry:
             }
 
         except Exception as e:
+            # Log full traceback for diagnostics
             logger.exception("Tool invocation failed: %s", tool_name)
+
+            # Provide a more actionable error message for common JSON/binary
+            # serialization problems (for example tools returning raw image
+            # bytes instead of a base64 encoded string). fastmcp raises a
+            # ToolError in these cases which ends up here as a generic
+            # Exception; inspect the message to give a clearer hint.
+            raw_err = str(e)
+            lower = raw_err.lower()
+            if "invalid utf-8" in lower or "invalid utf8" in lower or "error serializ" in lower or "cannot encode" in lower:
+                user_message = (
+                    "Tool returned non-UTF8/binary data which could not be JSON-serialized. "
+                    "Binary outputs (images) must be encoded as text (for example base64) by the MCP tool. "
+                    "Example: {\"type\": \"image\", \"mimeType\": \"image/png\", \"data\": \"<BASE64_STRING>\"}. "
+                    f"Original error: {raw_err}"
+                )
+            else:
+                user_message = raw_err
+
             return {
                 "tool": tool_name,
                 "ok": False,
-                "error": {"message": str(e)},
+                "error": {"message": user_message, "detail": raw_err},
             }
