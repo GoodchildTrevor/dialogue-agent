@@ -12,8 +12,13 @@ class LLMClient:
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
+        headers = {}
+        master_key = getattr(settings, "LITELLM_MASTER_KEY", None)
+        if master_key:
+            headers["Authorization"] = f"Bearer {master_key}"
         self._client = httpx.AsyncClient(
             base_url=settings.LLM_BASE_URL.rstrip("/"),
+            headers=headers,
             timeout=settings.TOOL_REQUEST_TIMEOUT_SECONDS,
             limits=httpx.Limits(max_connections=settings.HTTP_MAX_CONNECTIONS),
         )
