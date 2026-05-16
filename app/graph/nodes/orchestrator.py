@@ -77,6 +77,16 @@ def _uploaded_files_reminder(uploaded_files: list[dict]) -> str:
 
 
 def _safe_json_loads(val: Any) -> Any:
+    """Best-effort JSON parser that never raises an exception.
+
+    Attempts to parse *val* as JSON when it is a string.  On success the
+    deserialized Python object is returned; on failure – or when *val* is
+    already a non-string type – the original value is returned unchanged.
+
+    :param val: Value to parse. May be a JSON-encoded string or any other type.
+
+    :returns: The parsed Python object on success, otherwise *val* unchanged.
+    """
     if isinstance(val, str):
         try:
             return json.loads(val)
@@ -86,7 +96,17 @@ def _safe_json_loads(val: Any) -> Any:
 
 
 def _normalize_tool_calls(raw: Any) -> list[dict]:
-    """Normalise tool_calls regardless of which JSON schema the LLM used."""
+    """Normalize tool_calls regardless of which JSON schema the LLM used.
+
+    Accepts a raw value that may be a JSON-encoded string, a single dict,
+    or a list of dicts/strings.  Parses and normalizes every form into a
+    uniform list of ``{"tool": str, "arguments": dict}`` entries.
+
+    :param raw: Raw tool-call data from the LLM. May be a JSON string, a
+        single tool-call dict, or a list of tool-call items.
+    :returns: A list of normalized tool-call dicts. Empty list when *raw*
+        is None, non-list/non-dict, or contains no valid tools.
+    """
     raw = _safe_json_loads(raw)
 
     if isinstance(raw, dict):
@@ -122,6 +142,19 @@ def _normalize_tool_calls(raw: Any) -> list[dict]:
 
 
 def _sanitize_llm_output(parsed: Any, fallback_task: str) -> dict:
+    """Sanitize and normalize LLM output into a standard action dict.
+
+    Validates the *parsed* JSON output from the LLM, normalizes the action
+    field (including handling legacy ``"function"`` format), and extracts
+    tool calls.  Returns a dict with keys ``action``, ``answer``, ``task``,
+    and ``tool_calls``.
+
+    :param parsed: Raw parsed JSON dict from the LLM response.
+    :param fallback_task: Default task string to use when the LLM does not
+        provide a valid action or task.
+    :returns: A sanitized dict with keys ``action``, ``answer``, ``task``,
+        and ``tool_calls``.
+    """
     if not isinstance(parsed, dict):
         return {"action": "escalate", "task": fallback_task, "tool_calls": [], "answer": ""}
 
@@ -162,7 +195,17 @@ def _sanitize_llm_output(parsed: Any, fallback_task: str) -> dict:
 
 
 def _sanitize_tool_content(content: str, tool_name: str) -> str:
-    """Strip large binary payloads (e.g. base64 images) before sending to LLM."""
+    """Strip large binary payloads (e.g. base64 images) before sending to LLM.
+
+    Replaces base64-encoded image content with a human-readable placeholder
+    message so the LLM is not overwhelmed by large binary data.
+
+    :param content: The raw tool output string to sanitize.
+    :param tool_name: Name of the tool that generated the content, used in
+        the placeholder message.
+    :returns: The sanitized string, or a placeholder if image data is
+        detected.
+    """
     if isinstance(content, str) and (
         "type='image'" in content
         or 'type="image"' in content
@@ -175,6 +218,15 @@ def _sanitize_tool_content(content: str, tool_name: str) -> str:
 
 
 def _format_intermediate_steps(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Format intermediate steps for consumption by the orchestrator.
+
+    Transforms raw tool execution results into a structured format with
+    sanitized content (stripping large binary payloads).
+
+    :param steps: List of raw intermediate step dicts containing ``tool_calls``
+        and ``results`` keys.
+    :returns: A list of formatted step dicts with sanitized result content.
+    """
     formatted = []
     for step in steps:
         calls = step.get("tool_calls", [])
@@ -210,6 +262,16 @@ def _build_unknown_tool_error_step(
     unknown_names: list[str],
     known_tools: list[str],
 ) -> dict[str, Any]:
+    """Build an error step for unknown tool calls.
+
+    Creates a structured error response listing unknown tools and providing
+    the full list of available tools to help the LLM retry correctly.
+
+    :param unknown_names: List of tool names that were not recognized.
+    :param known_tools: List of valid tool names the LLM should use instead.
+    :returns: A dict with ``tool_calls`` and ``results`` containing error
+        messages for each unknown tool.
+    """
     return {
         "tool_calls": [{"tool": name, "arguments": {}} for name in unknown_names],
         "results": [
@@ -228,6 +290,18 @@ def _build_unknown_tool_error_step(
 
 
 class OrchestratorNode:
+    """Graph node that decides what action to take next in the conversation.
+
+    Routes between ``respond``, ``tools``, and ``escalate`` actions based on
+    LLM output, handling tool-call normalization and error recovery.
+    :param llm_client: Chat completion client used to call the LLM model.
+    :param settings: Application settings object containing model names,
+        timeouts, and search limits.
+    :param tool_registries: List of ``ToolRegistry`` instances providing
+        tool descriptions and execution capabilities.
+    :param history_service: Service used to search conversation history
+        for relevant past interactions.
+    """
 
     def __init__(self, llm_client, settings, tool_registries: list[ToolRegistry], history_service):
         self.llm_client = llm_client
@@ -236,12 +310,31 @@ class OrchestratorNode:
         self.history_service = history_service
 
     def _all_tool_descriptions(self) -> list[dict[str, Any]]:
+        """Return a combined list of tool descriptions from all registries.
+
+        Calls ``describe_for_model()`` on each registered tool registry and
+        concatenates the results into a single flat list.
+
+        :returns: A list of tool description dicts suitable for passing to
+            the LLM as available tool definitions.
+        """
         result = []
         for registry in self.tool_registries:
             result.extend(registry.describe_for_model())
         return result
 
     async def action(self, state: AssistantState) -> dict[str, Any]:
+        """Execute the orchestrator node logic.
+
+        Searches conversation history, builds the LLM prompt with tool
+        descriptions and uploaded-file reminders, calls the LLM model, and
+        returns the appropriate next-action dict based on the parsed response.
+
+        :param state: The current ``AssistantState`` containing messages,
+            context, uploaded files, and intermediate steps.
+        :returns: A dict with ``next_action`` (one of ``end``, ``tools``,
+            or ``reasoning``) and associated data keys.
+        """
         log.debug(
             "[%s] orchestrator uploaded_files raw from state: %s",
             state["request_id"],
@@ -412,6 +505,15 @@ class OrchestratorNode:
         return self._fallback(state, parsed["task"])
 
     def _fallback(self, state: AssistantState, task: str) -> dict[str, Any]:
+        """Return a fallback response that routes to the reasoning node.
+
+        Used when the LLM call fails or produces an unrecognized action.
+
+        :param state: The current ``AssistantState``.
+        :param task: The task string to include in the escalation context.
+        :returns: A dict with ``next_action="reasoning"`` and an
+            ``escalation_task`` in the context.
+        """
         return {
             "next_action": "reasoning",
             "context": {
