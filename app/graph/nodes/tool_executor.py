@@ -14,7 +14,12 @@ _RES_PREVIEW_LEN = 300   # max chars for result preview in logs
 
 
 def _truncate(value: Any, max_len: int) -> str:
-    """Return a compact string representation of *value*, capped at *max_len* chars."""
+    """Return a compact string representation of *value*, capped at *max_len* chars.
+
+    :param value: The value to truncate.
+    :param max_len: Maximum allowed string length.
+    :returns: The truncated string representation.
+    """
     text = str(value)
     if len(text) > max_len:
         return text[:max_len] + "\u2026"
@@ -22,21 +27,38 @@ def _truncate(value: Any, max_len: int) -> str:
 
 
 class ToolExecutorNode():
+    """Node responsible for executing tool calls in the dialogue graph.
+
+    Invokes tools from registered registries and normalizes results,
+    handling errors and collecting image payloads from tool responses.
+    :param emit_status: Callback function to emit status updates.
+    :param settings: Application settings containing configuration such as MAX_TOOL_RETRIES.
+    :param tool_registries: List of ToolRegistry instances to look up and invoke tools.
+    """
+
     def __init__(self, emit_status, settings, tool_registries: list[ToolRegistry]):
         self.emit_status = emit_status
         self.tool_registries = tool_registries
-        # Keep backward-compat reference to the primary registry
         self.tool_registry = tool_registries[0] if tool_registries else None
         self.settings = settings
 
     def _find_registry(self, tool_name: str) -> ToolRegistry | None:
-        """Return the first registry that knows about this tool."""
+        """Return the first registry that knows about this tool.
+
+        :param tool_name: Name of the tool to look up.
+        :returns: The first ToolRegistry that has the tool, or None if not found.
+        """
         for registry in self.tool_registries:
             if registry.has_tool(tool_name):
                 return registry
         return None
 
     async def action(self, state: AssistantState) -> dict[str, Any]:
+        """Execute all pending tool calls and return the results.
+
+        :param state: The current graph state containing pending tool calls.
+        :returns: A dictionary with tool results, updated retry counts, images, and next action.
+        """
         tool_calls = state.get("pending_tool_calls", [])
         payload = {"tool_calls": tool_calls}
         async with trace(step_name="tool_executor", user_id=state["user_id"], request_id=state["request_id"], input=payload) as t:
@@ -98,11 +120,6 @@ class ToolExecutorNode():
 
         new_step = {"tool_calls": tool_calls, "results": results}
 
-        # Collect images from successful tool results.
-        # Backwards-compat: some tools return a structured {'images': [...]}
-        # while others embed an image payload in the `content` string
-        # (e.g. "Generated image... type='image' data='iVBOR...'").
-        # Parse both formats and assemble a unified images list.
         new_images: list[dict[str, str]] = []
         img_pattern = re.compile(r"data=['\"]([A-Za-z0-9+/=]+)['\"]")
         for r in results:
