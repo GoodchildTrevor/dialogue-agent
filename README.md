@@ -1,20 +1,13 @@
-# dialogue-bot
+# dialogue-agent
 
-`dialogue-bot` is the assistant runtime application for a universal corporate assistant built with FastAPI, LangGraph, Ollama, and PostgreSQL/PGvector. It orchestrates internal tools via MCP (Model Context Protocol), tracing, history search, and SSE streaming, but it does **not** implement `chunker_service`, `pg_ingester`, document parsing, ingestion internals, or external tool backends.
+`dialogue-agent` is the assistant runtime for a universal corporate assistant built with FastAPI, LangGraph, LiteLLM, and PostgreSQL/pgvector. It orchestrates internal tools via MCP (Model Context Protocol), semantic history search, file ingestion, and SSE streaming.
 
 ## Prerequisites
 
-- Docker
-- Docker Compose
-- Ollama installed and running
-- At least `ROUTER_MODEL`, `REASONING_MODEL`, and `EMBEDDING_MODEL` pulled into Ollama
-- MCP tool server (dialogue-agent-mcp) running and accessible at `MCP_SERVER_URL`
-- Both repos cloned side-by-side (required for `pg-vector-ingester` build context):
-  ```
-  projects/
-  ├── dialogue-agent/
-  └── pg-vector-ingester/
-  ```
+- Docker and Docker Compose
+- A running **LiteLLM proxy** reachable at `LLM_BASE_URL` with model aliases matching `ROUTER_MODEL` and `REASONING_MODEL` from your `.env`
+- MCP tool server (`dialogue-agent-mcp`) running and accessible at `MCP_SERVER_URL`
+- _(Optional)_ File-converter MCP server at `FILE_CONVERTER_MCP_URL`
 
 ## Quick start
 
@@ -22,108 +15,142 @@
    ```bash
    cp .env.example .env
    ```
-2. Pull all three required models (use the names you set in `.env`):
-   ```bash
-   ollama pull $ROUTER_MODEL
-   ollama pull $REASONING_MODEL
-   ollama pull $EMBEDDING_MODEL
-   ```
-   The default values from `.env.example` are:
-   | Variable | Default |
-   |---|---|
-   | `ROUTER_MODEL` | `llama3.1:8b` |
-   | `REASONING_MODEL` | `qwen2.5-coder:14b` |
-   | `EMBEDDING_MODEL` | `nomic-embed-text` |
+2. Review the key variables in `.env`:
+
+   | Variable | Default | Description |
+   |---|---|---|
+   | `LLM_BASE_URL` | `http://litellm:4000` | LiteLLM proxy base URL |
+   | `ROUTER_MODEL` | `router-model` | Model alias for routing/classification |
+   | `REASONING_MODEL` | `reasoning-model` | Model alias for main reasoning |
+   | `EMBEDDING_MODEL_NAME` | `Qwen/Qwen3-Embedding-0.6B` | fastembed model for in-process embedding |
+   | `MCP_SERVER_URL` | `http://dialogue-agent-mcp:8000/mcp` | MCP tool server URL |
+   | `MCP_AUTH_TOKEN` | — | Shared Bearer token (must match MCP server) |
+   | `API_KEY` | — | `X-API-Key` header value required by all endpoints |
+
 3. Start the stack:
    ```bash
    docker compose up --build
    ```
-4. Verify the healthcheck:
+4. Verify the health endpoint (no auth required):
    ```bash
    curl http://localhost:8000/healthz
    ```
-5. Test the SSE endpoint:
+5. Test the SSE streaming endpoint:
    ```bash
    curl -N -X POST http://localhost:8000/api/v1/stream \
      -H "Content-Type: application/json" \
+     -H "X-API-Key: <your-api-key>" \
      -d '{"user_id": "test-user", "message": "Find documents about Q3 budget"}'
    ```
 
-## Ollama setup
+## LiteLLM setup
 
-Ollama must be reachable at `OLLAMA_BASE_URL` from inside the Docker network. The default `.env.example` uses `http://host.docker.internal:11434`; on Linux, the compose file adds `host-gateway` so the container can reach the host.
+All LLM calls are routed through a LiteLLM proxy. The model names in `.env` must match `model_name` entries in your `litellm_config.yaml`. No model name is hardcoded in the application — all are resolved via environment variables.
 
-All three model names are configured exclusively via environment variables — no model name is hardcoded anywhere in the application. Set `ROUTER_MODEL`, `REASONING_MODEL`, and `EMBEDDING_MODEL` in your `.env` file before starting the stack.
+## API
+
+All routes (except `/healthz`) require the `X-API-Key` header.
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/healthz` | Health check — returns `{"status": "ok"}` |
+| `POST` | `/api/v1/chat` | Blocking JSON chat — returns `{"answer": "...", "images": [...]}` |
+| `POST` | `/api/v1/stream` | SSE streaming chat — emits `status`, `answer`, and `[DONE]` frames |
+| `POST` | `/api/v1/upload` | Upload one or more files for ingestion (multipart/form-data) |
+| `GET` | `/api/v1/upload/{file_id}/status` | Poll ingestion status of an uploaded file |
+
+### Chat request body (`/chat` and `/stream`)
+
+```json
+{
+  "user_id": "alice",
+  "message": "Summarise last quarter's report",
+  "uploaded_files": [
+    {"file_id": "uuid", "filename": "report.pdf"}
+  ]
+}
+```
+
+`uploaded_files` is optional. When omitted, the service auto-attaches recently indexed files for the user (controlled by `FILE_AUTO_ATTACH_MINUTES`).
+
+### File upload (`/upload`)
+
+```bash
+curl -X POST http://localhost:8000/api/v1/upload \
+  -H "X-API-Key: <your-api-key>" \
+  -F "user_id=alice" \
+  -F "files=@report.pdf"
+# → {"files": [{"file_id": "...", "filename": "report.pdf", "status": "pending"}]}
+```
+
+Poll status until `"indexed"`:
+```bash
+curl http://localhost:8000/api/v1/upload/<file_id>/status \
+  -H "X-API-Key: <your-api-key>"
+```
 
 ## Architecture
 
-- `app/core/config.py` centralizes all environment-based settings with `pydantic-settings`.
-- `app/core/tracing.py` measures latency and persists structured traces asynchronously.
-- `app/db/` contains SQLAlchemy 2.0 models and database initialization with the `vector` extension.
-- `app/graph/` contains the LangGraph state, nodes, and transitions.
-- `app/graph/tool_registry.py` manages MCP client connection and tool invocation.
-- `app/services/` contains async clients for external infrastructure services.
-- `app/api/` exposes health, JSON chat, and SSE streaming endpoints.
+- `app/core/config.py` — centralizes all environment-based settings with `pydantic-settings`.
+- `app/metrics.py` — Prometheus metrics (counters, histograms, in-flight gauges).
+- `app/db/` — SQLAlchemy 2.0 async models and database initialization with the `pgvector` extension.
+- `app/graph/` — LangGraph state machine: nodes, transitions, and `GraphRuntime`.
+- `app/graph/tool_registry.py` — MCP client connection lifecycle and tool invocation.
+- `app/services/history_service.py` — saves messages to PostgreSQL; semantic search via pgvector.
+- `app/services/pg_ingester.py` — async client that triggers embedding of saved messages.
+- `app/services/chunker_service.py` — client for the external chunker service.
+- `app/services/file_ingestion_service.py` — orchestrates the full file ingestion pipeline.
+- `app/services/qdrant_ingester_client.py` — sends chunked file data to the Qdrant ingester.
+- `app/api/routes.py` — health, JSON chat, SSE streaming, file upload, and status endpoints.
 
 ## Service ecosystem
 
-`dialogue-agent` is the central orchestrator. It depends on several microservices:
+`dialogue-agent` is the central orchestrator. It depends on several external services:
 
-| Service | Repo | Port | Purpose |
+| Service | Repo | Default port | Purpose |
 |---|---|---|---|
 | `dialogue-agent` (this) | — | `8000` | LangGraph orchestrator, SSE streaming, history search |
-| `pg-vector-ingester` | [pg-vector-ingester](https://github.com/GoodchildTrevor/pg-vector-ingester) | `8001` | Embeds dialogue messages, persists vectors to PostgreSQL |
-| `qdrant-ingester` | [qdrant-ingester](https://github.com/GoodchildTrevor/qdrant-ingester) | `8002` | Chunks uploaded files, embeds and upserts into Qdrant |
+| `dialogue-agent-mcp` | — | configured via `MCP_SERVER_URL` | MCP tool server — exposes internal tools |
+| `qdrant-ingester` | [qdrant-ingester](https://github.com/GoodchildTrevor/qdrant-ingester) | `8000` (internal) | Chunks uploaded files, embeds and upserts into Qdrant |
+| `postgres` | pgvector/pgvector:pg16 | `5432` (internal) | Stores messages, embeddings, file metadata |
 
-### pg-vector-ingester integration
+## MCP integration
 
-`pg-vector-ingester` is called by `PgIngesterClient` (`app/services/pg_ingester.py`) after new messages need to be vectorized — the caller passes the exact `message_ids` it wants embedded. Status updates on `files` are **not** handled here.
+Tools are provided via MCP from an external server. On startup the application:
 
-**Ingest flow:**
-```
-dialogue-agent
-  │
-  └── PgIngesterClient.trigger_ingestion(message_ids=[...])
-        │
-        ▼
-  pg-vector-ingester POST /ingest
-        1. Load messages WHERE id IN (message_ids) AND embedding IS NULL
-        2. Embed message.content via fastembed (paraphrase-multilingual-mpnet-base-v2)
-        3. UPDATE messages SET embedding = $vec  (pgvector)
-```
+1. Connects to the MCP server at `MCP_SERVER_URL` via `fastmcp.Client` using a Bearer token.
+2. Discovers available tools via `list_tools()`.
+3. Invokes tools via `call_tool()` when the orchestrator requests them.
+4. Disconnects cleanly on shutdown.
 
-**Sync flow** (recovery / bootstrap):
-```
-PgIngesterClient.sync(user_id=None)  →  POST /sync
-  Find ALL messages WHERE embedding IS NULL → embed
-  Optional: scope to a single user_id
-```
+An optional second MCP server (`FILE_CONVERTER_MCP_URL`) can be configured for file conversion. Leave the variable blank to disable it.
 
-This enables semantic search over past conversations:
+## Embedding
+
+Embeddings are computed **in-process** using [fastembed](https://github.com/qdrant/fastembed). The model is set via `EMBEDDING_MODEL_NAME` (default: `Qwen/Qwen3-Embedding-0.6B`). Batch sizes are tunable via `EMBEDDING_BATCH_SIZE` and `EMBEDDING_INSERT_BATCH_SIZE`.
+
+Stored embeddings enable semantic search over past conversations:
 ```sql
 SELECT content FROM messages
 ORDER BY embedding <=> $query_vector
 LIMIT 5;
 ```
-So when a user asks something similar to a past question, the agent can surface the earlier dialogue and its resolved answer directly, without repeating the full reasoning chain.
 
-### qdrant-ingester integration
+## Monitoring
 
-`qdrant-ingester` handles uploaded *file* documents (PDFs, DOCX, etc.) — it chunks them, creates dense + sparse embeddings, and stores points in Qdrant. It operates independently of `pg-vector-ingester`.
+The stack ships with Prometheus and the configuration for Grafana dashboards:
 
-## MCP Integration
+- Prometheus scrapes `/metrics` on the app and is available at `http://localhost:9090`.
+- Grafana dashboard configs are in `grafana/`.
+- Retention is set to 30 days (`--storage.tsdb.retention.time=30d`).
 
-Tools are provided via MCP (Model Context Protocol) from an external MCP server. The application:
+## Running tests
 
-1. Connects to the MCP server at startup via `fastmcp.Client`
-2. Discovers available tools via `list_tools()`
-3. Invokes tools via `call_tool()` when the orchestrator requests them
-4. Properly disconnects from the MCP server on shutdown
-
-The MCP server URL is configured via `MCP_SERVER_URL` in the environment.
+```bash
+docker compose --profile test run --rm test
+```
 
 ## Notes
 
-- Retrieval is designed to happen through external tools and PostgreSQL history search only.
-- External adapter paths are placeholders and should be aligned with real downstream contracts.
-- Tool execution happens through MCP; the application does not implement tools directly.
+- Retrieval happens through MCP tools and PostgreSQL semantic history search only.
+- Tool execution is fully delegated to the MCP server; no tools are implemented directly in this service.
