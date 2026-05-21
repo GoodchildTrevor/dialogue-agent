@@ -147,17 +147,38 @@ class GraphRuntime:
         self.graph = self._build_graph()
 
     async def startup(self) -> None:
+        """Startup the runtime by initializing MCP clients and refreshing tool registries.
+
+        This method should be called before using the graph to ensure all
+        MCP connections are established and tool descriptions are cached.
+
+        :returns: None
+        """
         await self.tool_registry.startup()
         if self.file_converter_registry:
             await self.file_converter_registry.startup()
 
     async def shutdown(self) -> None:
+        """Shutdown the runtime by closing MCP clients and releasing resources.
+
+        This method should be called when the runtime is no longer needed
+        to properly clean up MCP connections and tool registry state.
+
+        :returns: None
+        """
         await self.tool_registry.shutdown()
         if self.file_converter_registry:
             await self.file_converter_registry.shutdown()
 
     async def refresh_tool_descriptions(self) -> None:
-        """Fetch and cache the tool list from all MCP servers."""
+        """Refresh and cache the tool list from all connected MCP servers.
+
+        Fetches the latest tool definitions from both the primary and
+        file converter MCP servers (if configured) and updates the
+        respective registries with current tool descriptions and schemas.
+
+        :returns: None
+        """
         if self.tool_registry:
             await self.tool_registry.refresh_tools()
         if self.file_converter_registry:
@@ -172,6 +193,20 @@ class GraphRuntime:
         status_queue: asyncio.Queue[str] | None = None,
         uploaded_files: list[dict[str, str]] | None = None,
     ) -> AssistantState:
+        """Build the initial state for a new graph execution.
+
+        Creates and returns an :class:`AssistantState` dictionary containing
+        the starting configuration for the agent workflow, including user
+        identification, message content, and optional metadata.
+
+        :param user_id: Identifier for the user initiating the request
+        :param message: The user's input message to process
+        :param request_id: Unique identifier for this request
+        :param status_queue: Optional async queue for streaming status updates
+        :param uploaded_files: Optional list of dicts containing file metadata
+            (e.g., from user file uploads)
+        :returns: Initial :class:`AssistantState` dictionary
+        """
         return {
             "messages": [{"role": "user", "content": message}],
             "user_id": user_id,
@@ -186,29 +221,102 @@ class GraphRuntime:
         }
 
     async def run(self, state: AssistantState) -> AssistantState:
+        """Execute the graph workflow with the given initial state.
+
+        Runs the compiled LangGraph state machine from the start node
+        through the router, orchestrator, tools, and reasoning nodes
+        as needed, returning the final state after completion.
+
+        :param state: Initial :class:`AssistantState` to begin execution
+        :returns: Final :class:`AssistantState` containing results, tool
+            outputs, and intermediate processing data
+        """
         return await self.graph.ainvoke(state)
 
     async def router_node(self, state: AssistantState) -> dict[str, Any]:
+        """Route the user input through the router node.
+
+        Determines the initial flow based on the user input by invoking
+        the internal router node. Routes execution to either the
+        orchestrator, reasoning, or directly to end.
+
+        :param state: Current :class:`AssistantState` containing user message
+            and context
+        :returns: Dictionary of state updates from the router node
+        """
         return await self._router_node.action(state)
 
     async def orchestrator_node(self, state: AssistantState) -> dict[str, Any]:
+        """Execute the orchestrator node to plan and delegate tool calls.
+
+        Checks whether the tool registry has cached descriptions before
+        orchestration and refreshes them if empty. Then invokes the
+        internal orchestrator node to plan tool calls based on the
+        current state.
+
+        :param state: Current :class:`AssistantState` containing message
+            history, context, and intermediate steps
+        :returns: Dictionary of state updates from the orchestrator node
+            including planned tool calls
+        """
         if self.tool_registry and self.tool_registry.is_empty:
             logger.warning("Tool cache is empty, refreshing before orchestration")
             await self.refresh_tool_descriptions()
         return await self._orchestrator_node.action(state)
 
     async def tool_executor_node(self, state: AssistantState) -> dict[str, Any]:
+        """Execute tool calls planned by the orchestrator node.
+
+        Invokes the internal tool executor node to perform all pending
+        tool calls collected in the intermediate steps of the current
+        state, then collects and stores the results.
+
+        :param state: Current :class:`AssistantState` containing pending
+            tool calls in intermediate steps
+        :returns: Dictionary of state updates from the tool executor node
+            with tool results
+        """
         return await self._tool_executor_node.action(state)
 
     async def strong_model_node(self, state: AssistantState) -> dict[str, Any]:
+        """Execute the strong model (reasoning) node.
+
+        Invokes the internal strong model node to perform deep reasoning
+        on the current state using a powerful LLM. This node is used for
+        complex tasks requiring thorough analysis and reasoning.
+
+        :param state: Current :class:`AssistantState` containing context
+            and information needed for reasoning
+        :returns: Dictionary of state updates from the strong model node
+            with reasoning results
+        """
         return await self._strong_model_node.action(state)
 
     async def emit_status(self, state: dict[str, Any], message: str) -> None:
+        """Emit a status message to the status queue if available.
+
+        Puts a status update message into the async queue provided in
+        the state, enabling real-time status streaming to clients.
+
+        :param state: State dictionary containing an optional ``status_queue``
+            key with an :class:`asyncio.Queue` for status messages
+        :param message: The status message to emit to the queue
+        :returns: None
+        """
         queue = state.get("status_queue")
         if queue is not None:
             await queue.put(message)
 
     def _build_graph(self):
+        """Build and compile the LangGraph state machine.
+
+        Constructs the :class:`StateGraph` with all four nodes (router,
+        orchestrator, tools, reasoning), defines the edges connecting them,
+        and configures conditional routing between nodes based on the
+        output of each step. The compiled graph is stored in ``self.graph``.
+
+        :returns: Compiled LangGraph state machine
+        """
         graph = StateGraph(AssistantState)
         graph.add_node("router", self.router_node)
         graph.add_node("orchestrator", self.orchestrator_node)
