@@ -9,6 +9,12 @@ logger = logging.getLogger(__name__)
 
 
 def _extract_token_estimate(response: dict[str, Any]) -> int | None:
+    """Extract and sum prompt and completion token counts from an LLM response dict.
+
+    :param response: A dictionary containing ``prompt_eval_count`` and/or
+        ``eval_count`` keys as returned by an LLM API call.
+    :returns: The total token count, or ``None`` when neither key is present.
+    """
     prompt_tokens = response.get("prompt_eval_count")
     completion_tokens = response.get("eval_count")
     if prompt_tokens is None and completion_tokens is None:
@@ -17,6 +23,12 @@ def _extract_token_estimate(response: dict[str, Any]) -> int | None:
 
 
 def _parse_json_object(content: str) -> dict[str, Any] | None:
+    """Parse a JSON object from *content*, falling back to regex extraction.
+
+    :param content: A string that may contain valid JSON or a JSON-like object
+        wrapped in curly braces.
+    :returns: A ``dict`` if parsing succeeds, otherwise ``None``.
+    """
     try:
         parsed = json.loads(content)
         return parsed if isinstance(parsed, dict) else None
@@ -32,6 +44,13 @@ def _parse_json_object(content: str) -> dict[str, Any] | None:
 
 
 def _router_fallback(user_message: str) -> dict[str, Any]:
+    """Determine routing metadata for simple / complex messages when the LLM
+    router does not return a structured response.
+
+    :param user_message: The raw text input from the end user.
+    :returns: A dictionary with keys ``is_simple``, ``needs_tools``,
+        ``is_complex_task``, ``needs_reasoning_model``, and optionally ``answer``.
+    """
     message = user_message.lower().strip()
     if message in {"hi", "hello", "hey", "thanks", "thank you"}:
         return {
@@ -57,6 +76,13 @@ def _router_fallback(user_message: str) -> dict[str, Any]:
 
 
 def _normalize_tool_calls(raw_calls: Any) -> list[ToolCall]:
+    """Validate and normalise raw tool-call payloads into a consistent list.
+
+    :param raw_calls: A list of dicts, each expected to contain ``tool`` (str)
+        and ``arguments`` (dict) keys.  Non-dict entries are skipped.
+    :returns: A list of ``ToolCall`` dicts with guaranteed ``tool`` and
+        ``arguments`` keys.
+    """
     normalized: list[ToolCall] = []
     if not isinstance(raw_calls, list):
         return normalized

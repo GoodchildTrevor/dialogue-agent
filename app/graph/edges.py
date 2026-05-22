@@ -8,6 +8,12 @@ log = logging.getLogger(__name__)
 
 
 def after_router(state: AssistantState) -> str:
+    """Determine the next destination after router node.
+    
+    :param state: Current assistant state containing request data and flags.
+    :returns: "end" if a final answer is present, otherwise the next action 
+              or "orchestrator" as default.
+    """
     if state.get("final_answer"):
         destination = "end"
     else:
@@ -21,6 +27,12 @@ def after_router(state: AssistantState) -> str:
 
 
 def after_orchestrator(state: AssistantState) -> str:
+    """Determine the next destination after orchestrator node.
+    
+    :param state: Current assistant state containing request data and flags.
+    :returns: "end" if a final answer is present, otherwise the next action 
+              or "reasoning" as default.
+    """
     if state.get("final_answer"):
         destination = "end"
     else:
@@ -36,6 +48,11 @@ def after_orchestrator(state: AssistantState) -> str:
 
 
 def after_tools(state: AssistantState) -> str:
+    """Determine the next destination after tools execution.
+    
+    :param state: Current assistant state containing request data and retry info.
+    :returns: The next action from state, or "orchestrator" as default.
+    """
     destination = state.get("next_action", "orchestrator")
     log.debug(
         "[%s] after_tools -> %s (retry_count=%d)",
@@ -47,6 +64,12 @@ def after_tools(state: AssistantState) -> str:
 
 
 def after_reasoning(state: AssistantState) -> str:
+    """Determine the next destination after reasoning node.
+    
+    :param state: Current assistant state containing request data and flags.
+    :returns: "end" if a final answer is present, otherwise the next action 
+              or "end" as default.
+    """
     if state.get("final_answer"):
         destination = "end"
     else:
