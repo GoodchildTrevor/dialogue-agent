@@ -29,6 +29,11 @@ api_key_header = APIKeyHeader(name="X-API-Key")
 
 
 def get_settings_dep(request: Request) -> Settings:
+    """Retrieve application settings from the FastAPI app state.
+
+    :param request: The FastAPI Request object containing app state.
+    :returns: The Settings instance configured at application startup.
+    """
     return request.app.state.settings
 
 
@@ -36,12 +41,24 @@ async def get_api_key(
     api_key: str = Depends(api_key_header),
     settings: Settings = Depends(get_settings_dep),
 ) -> str:
+    """Validate the API key provided in the X-API-Key request header.
+
+    :param api_key: The API key extracted from the ``X-API-Key`` header.
+    :param settings: Application settings containing the expected API key.
+    :returns: The validated API key string.
+    :raises HTTPException: 403 Forbidden if the API key is invalid.
+    """
     if api_key != settings.API_KEY:
         raise HTTPException(status_code=403, detail="Invalid API key")
     return api_key
 
 
 def get_runtime(request: Request) -> GraphRuntime:
+    """Retrieve the GraphRuntime singleton from the FastAPI app state.
+
+    :param request: The FastAPI Request object providing access to ``app.state``.
+    :returns: The GraphRuntime instance used for chat/dialogue orchestration.
+    """
     return request.app.state.runtime
 
 
@@ -52,9 +69,14 @@ async def _save_and_embed(
     user_content: str,
     assistant_content: str,
 ) -> None:
-    """Save user + assistant messages to PG and embed them asynchronously.
+    """Save user + assistant messages to PostgreSQL and embed them asynchronously.
 
     Runs as a fire-and-forget task — never raises to the caller.
+
+    :param runtime: The GraphRuntime instance providing service access.
+    :param user_id: The identifier of the user whose messages are being saved.
+    :param user_content: The user's message text to save and embed.
+    :param assistant_content: The assistant's response text to save and embed.
     """
     try:
         user_msg_id = await runtime.history_service.save_message(
@@ -76,7 +98,11 @@ _SSE_HEADERS = {
 
 
 def _sse(payload: dict) -> str:
-    """Encode *payload* as a plain SSE data frame (no event name)."""
+    """Encode *payload* as a plain SSE data frame with no event name.
+
+    :param payload: The dictionary to serialize as JSON within the ``data:`` line.
+    :returns: A string formatted as an SSE data frame ending with double newlines.
+    """
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
@@ -84,6 +110,12 @@ _MAX_FILENAME_LEN = 200
 
 
 def _sanitize_filename(name: str) -> str:
+    """Sanitize a filename by extracting its base name, replacing invalid characters,
+    and truncating to the maximum allowed length.
+
+    :param name: The original filename string, which may include path components.
+    :returns: A sanitized filename safe for filesystem storage.
+    """
     name = Path(name).name
     name = re.sub(r"[^\w.\-]", "_", name)
     name = re.sub(r"_+", "_", name).strip("_")
@@ -93,10 +125,14 @@ def _sanitize_filename(name: str) -> str:
 
 
 async def _enrich_uploaded_files(uploaded_files) -> list[dict]:
-    """Fetch inline_text from DB for each uploaded file.
+    """Fetch inline_text from the database for each uploaded file.
 
-    Client only sends file_id + filename. inline_text is resolved server-side
-    so the orchestrator can decide whether to use inline text or call document_searcher.
+    The client only sends file_id + filename. This function resolves inline_text
+    server-side so the orchestrator can decide whether to use inline text or call
+    document_searcher.
+
+    :param uploaded_files: An iterable of UploadedFile objects containing file_id values.
+    :returns: A list of dictionaries with keys ``file_id``, ``filename``, and ``inline_text``.
     """
     if not uploaded_files:
         return []
@@ -122,12 +158,16 @@ async def _enrich_uploaded_files(uploaded_files) -> list[dict]:
 
 
 async def _auto_attach_recent_files(user_id: str, minutes: int) -> list[UploadedFile]:
-    """Find the user's recently indexed files and return them as UploadedFile list.
+    """Find the user's recently indexed files and return them as an UploadedFile list.
 
     When the client does not explicitly pass uploaded_files, this fallback queries
     the database for files belonging to this user that were successfully indexed
-    within the last ``minutes`` minutes.  This allows the system to automatically
+    within the last ``minutes`` minutes. This allows the system to automatically
     associate a previously uploaded file with the current chat request.
+
+    :param user_id: The identifier of the user whose recent files to find.
+    :param minutes: The time window in minutes to search for recently indexed files.
+    :returns: A list of UploadedFile objects for recent files, or an empty list if none found.
     """
     cutoff = datetime.now(timezone.utc) - timedelta(minutes=minutes)
 
@@ -167,6 +207,10 @@ async def _auto_attach_recent_files(user_id: str, minutes: int) -> list[Uploaded
 
 @router.get("/healthz")
 async def healthz() -> JSONResponse:
+    """Health check endpoint that returns the service status.
+
+    :returns: A JSONResponse with ``{"status": "ok"}`` indicating the service is healthy.
+    """
     return JSONResponse({"status": "ok"})
 
 
@@ -176,6 +220,16 @@ async def chat(
     request: Request,
     api_key: str = Depends(get_api_key),
 ) -> ChatResponse:
+    """Process a chat message and return the assistant's response.
+
+    Handles non-streaming chat requests by building an initial state, running
+    the graph runtime, and asynchronously saving the conversation to the database.
+
+    :param payload: The chat request containing user_id, message, and optional uploaded_files.
+    :param request: The FastAPI Request object providing access to app state and settings.
+    :param api_key: Validated API key from the X-API-Key header (auto-checked via dependency).
+    :returns: A ChatResponse containing the assistant's answer and any images.
+    """
     settings: Settings = request.app.state.settings
     logger.info("CHAT uploaded_files: %s", payload.uploaded_files)
 
@@ -218,6 +272,16 @@ async def stream(
     request: Request,
     api_key: str = Depends(get_api_key),
 ) -> StreamingResponse:
+    """Process a chat message and stream the assistant's response via Server-Sent Events.
+
+    Handles streaming chat requests by building an initial state, running the graph
+    runtime concurrently, and yielding status updates followed by the final answer.
+
+    :param payload: The chat request containing user_id, message, and optional uploaded_files.
+    :param request: The FastAPI Request object providing access to app state and settings.
+    :param api_key: Validated API key from the X-API-Key header (auto-checked via dependency).
+    :returns: A StreamingResponse with SSE-formatted status updates and the final answer.
+    """
     settings: Settings = request.app.state.settings
     request_id = getattr(request.state, "request_id", None) or uuid4().hex
     runtime = get_runtime(request)
@@ -289,6 +353,18 @@ async def upload_files(
     files: list[UploadFile] = File(...),
     api_key: str = Depends(get_api_key),
 ) -> JSONResponse:
+    """Upload one or more files and register them in the database for processing.
+
+    Validates MIME types against allowed settings, saves files to disk, creates
+    database records with "pending" status, and triggers asynchronous file ingestion.
+
+    :param request: The FastAPI Request object providing access to app state and settings.
+    :param user_id: The identifier of the user uploading files (from form data).
+    :param files: A list of UploadFile objects to be saved and processed.
+    :param api_key: Validated API key from the X-API-Key header (auto-checked via dependency).
+    :returns: A JSONResponse containing file IDs, filenames, and processing status.
+    :raises HTTPException: 415 if a file has an unsupported MIME type, 413 if a file exceeds the size limit.
+    """
     settings = request.app.state.settings
     max_bytes = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
 
@@ -340,6 +416,17 @@ async def file_status(
     request: Request,
     api_key: str = Depends(get_api_key),
 ) -> JSONResponse:
+    """Retrieve the processing status of an uploaded file.
+
+    Queries the database for the file record matching the given UUID and returns
+    its status, error message (if any), inline text, and original filename.
+
+    :param file_id: The UUID of the uploaded file to look up.
+    :param request: The FastAPI Request object providing access to app state.
+    :param api_key: Validated API key from the X-API-Key header (auto-checked via dependency).
+    :returns: A JSONResponse with file_id, filename, status, error, and inline_text.
+    :raises HTTPException: 404 Not Found if no file matches the given ID.
+    """
     async with get_session_maker()() as session:
         stmt = select(
             FileModel.status,
