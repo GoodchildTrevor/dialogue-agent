@@ -21,13 +21,11 @@ class RouterNode():
     - Answered directly (simple queries)
     - Routed through the orchestrator for tool usage or complex processing
     - Handled via fallback logic when routing fails
+
+    :param llm_client: The LLM client for making chat completions.
+    :param settings: Configuration settings containing model parameters.
     """
     def __init__(self, llm_client: Any, settings: Any) -> None:
-        """Initialize the RouterNode with LLM client and settings.
-        
-        :param llm_client: The LLM client for making chat completions.
-        :param settings: Configuration settings containing model parameters.
-        """
         self.llm_client = llm_client
         self.settings = settings
 
@@ -69,12 +67,6 @@ class RouterNode():
             update = _router_fallback(user_message) if parsed is None else parsed
             t.output = update
 
-            # Routing logic:
-            # - is_simple: answer immediately, no tools needed
-            # - needs_tools / needs_reasoning_model / is_complex_task:
-            #   ALL go through the orchestrator first so it can call tools.
-            #   The orchestrator will escalate to reasoning if it decides to.
-            #   Never skip the orchestrator — otherwise tool calls are impossible.
             if update.get("is_simple") and update.get("answer"):
                 t.route_decision = "simple"
             elif parsed is None:
@@ -95,8 +87,6 @@ class RouterNode():
         if update.get("is_simple") and update.get("answer"):
             return {"final_answer": str(update["answer"]), "next_action": "end"}
 
-        # Everything else — tools, complex tasks, reasoning hints — goes to orchestrator.
-        # The orchestrator will call `escalate` if it needs the strong model.
         return {
             "is_complex_task": bool(update.get("is_complex_task", False)),
             "next_action": "orchestrator",
