@@ -12,6 +12,17 @@ log = logging.getLogger(__name__)
 
 
 class StrongModelNode():
+    """A node that handles reasoning-based tasks using a strong language model.
+
+    This node processes tasks through a reasoning model, optionally invoking
+    tools when the task requires external actions, and returns final answers
+    when tool usage is not needed.
+
+    :param llm_client: The LLM client used to invoke reasoning models.
+    :param settings: Configuration settings containing model parameters and timeouts.
+    :param tool_registries: Optional list of tool registries providing available tools.
+        Defaults to an empty list if not provided.
+    """
 
     def __init__(self, llm_client, settings, tool_registries: list[ToolRegistry] | None = None):
         self.llm_client = llm_client
@@ -19,12 +30,28 @@ class StrongModelNode():
         self.tool_registries = tool_registries or []
 
     def _all_tool_descriptions(self) -> list[dict[str, Any]]:
+        """Collect tool descriptions from all registered tool registries.
+
+        :return: A list of dictionaries, each containing the schema description
+            of an available tool from all registries.
+        """
         result = []
         for registry in self.tool_registries:
             result.extend(registry.describe_for_model())
         return result
 
     async def action(self, state: AssistantState) -> dict[str, Any]:
+        """Execute the reasoning model to process the task.
+
+        Invokes the reasoning model with the task, context, and intermediate steps.
+        Routes to tool execution if tool calls are requested, otherwise returns
+        the final answer.
+
+        :param state: The current assistant state containing messages, context, and metadata.
+        :return: A dictionary with either:
+            - {"pending_tool_calls": [...], "next_action": "tools"} if tool calls are needed.
+            - {"final_answer": str, "next_action": "end"} for a complete answer.
+        """
         task = (
             state.get("context", {}).get("escalation_task")
             or state["messages"][-1]["content"]
@@ -61,6 +88,18 @@ class StrongModelNode():
         return {"final_answer": result.get("answer", ""), "next_action": "end"}
 
     async def _invoke_reasoning_model(self, task: str, state: AssistantState) -> dict[str, Any]:
+        """Invoke the reasoning model with the task and context.
+
+        Constructs the prompt with system instructions, tool descriptions (if available),
+        and task context. Calls the LLM and parses the response to extract either
+        tool calls or a direct answer.
+
+        :param task: The task description or user message to process.
+        :param state: The current assistant state containing context and intermediate steps.
+        :return: A dictionary with keys:
+            - "tool_calls": list of normalized tool call dicts (if tools are needed).
+            - "answer": the model's response text (if no tools are needed).
+        """
         safe_context = _make_json_safe(state.get("context", {}))
         safe_steps = _make_json_safe(state.get("intermediate_steps", []))
 
