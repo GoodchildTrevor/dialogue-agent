@@ -15,11 +15,34 @@ logger = logging.getLogger(__name__)
 
 
 class RouterNode():
-    def __init__(self, llm_client, settings):
+    """Handles routing of user messages to appropriate handlers.
+    
+    Analyzes incoming user messages and determines whether they should be:
+    - Answered directly (simple queries)
+    - Routed through the orchestrator for tool usage or complex processing
+    - Handled via fallback logic when routing fails
+    """
+    def __init__(self, llm_client: Any, settings: Any) -> None:
+        """Initialize the RouterNode with LLM client and settings.
+        
+        :param llm_client: The LLM client for making chat completions.
+        :param settings: Configuration settings containing model parameters.
+        """
         self.llm_client = llm_client
         self.settings = settings
 
     async def action(self, state: AssistantState) -> dict[str, Any]:
+        """Route the user's message to the appropriate handler.
+        
+        Analyzes the user's message and determines whether it should be answered
+        directly (simple), routed through the orchestrator (tools/complex tasks),
+        or handled via fallback logic.
+        
+        :param state: The current assistant state containing messages and metadata.
+        :returns: A dictionary with routing decision and next action. Contains keys
+            such as 'next_action' ('end', 'orchestrator'), 'final_answer' (for simple
+            responses), and task classification flags like 'is_complex_task'.
+        """
         user_message = state["messages"][-1]["content"]
         payload = {"message": user_message}
         async with trace(
