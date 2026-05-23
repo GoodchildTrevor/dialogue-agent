@@ -19,6 +19,10 @@ logger = logging.getLogger(__name__)
 
 
 def _configure_logging(level: str) -> None:
+    """Configure logging with the specified log level.
+
+    :param level: Log level string (e.g., 'DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL')
+    """
     numeric = getattr(logging, level.upper(), logging.INFO)
     logging.basicConfig(
         level=numeric,
@@ -32,6 +36,10 @@ def _configure_logging(level: str) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """Manage application lifespan by initializing and shutting down resources.
+
+    :param app: The FastAPI application instance
+    """
     settings = get_settings()
     _configure_logging(settings.LOG_LEVEL)
 
