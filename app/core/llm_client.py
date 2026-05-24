@@ -8,8 +8,10 @@ from app.core.config import Settings
 
 
 class LLMClient:
-    """OpenAI-compatible HTTP client targeting LiteLLM proxy."""
-
+    """OpenAI-compatible HTTP client targeting LiteLLM proxy.
+    :param settings: Application settings containing LiteLLM configuration.
+    """
+    
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
         headers = {}
@@ -33,6 +35,16 @@ class LLMClient:
         format: str | None = None,
         timeout: float | None = None,
     ) -> dict[str, Any]:
+        """Send a chat completion request to the LLM.
+
+        :param model: The model identifier to use for chat completion.
+        :param messages: A list of message dicts with 'role' and 'content' keys.
+        :param stream: Whether to stream the response. Defaults to False.
+        :param options: Optional extra options dict passed to the request.
+        :param format: Response format specification (e.g., 'json' for JSON mode).
+        :param timeout: Request timeout in seconds. Uses default if None.
+        :return: A dict with keys 'message', 'prompt_eval_count', and 'eval_count'.
+        """
         payload: dict[str, Any] = {
             "model": model,
             "messages": messages,
@@ -60,6 +72,12 @@ class LLMClient:
         }
 
     async def embeddings(self, *, model: str, prompt: str) -> list[float]:
+        """Generate embeddings for the given prompt.
+
+        :param model: The model identifier to use for embeddings.
+        :param prompt: The text input to generate embeddings for.
+        :return: A list of float embedding values.
+        """
         response = await self._client.post(
             "/v1/embeddings",
             json={"model": model, "input": prompt},
@@ -68,4 +86,8 @@ class LLMClient:
         return response.json()["data"][0]["embedding"]
 
     async def aclose(self) -> None:
+        """Close the underlying HTTP client connection.
+
+        :return: None
+        """
         await self._client.aclose()
