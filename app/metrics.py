@@ -57,7 +57,12 @@ _last_scraped_at: float = 0.0
 
 
 async def init_watermark() -> None:
-    """Seed the watermark from the most recent trace row so we don't replay history on restart."""
+    """Seed the watermark from the most recent trace row so we don't replay history on restart.
+    
+    :param None: This function takes no parameters
+    :returns: None
+    :raises: May raise exceptions related to database connectivity or SQLAlchemy operations
+    """
     global _last_scraped_at
     from sqlalchemy import select, func
     from datetime import datetime, timezone
@@ -76,7 +81,12 @@ async def init_watermark() -> None:
 
 
 async def collect_metrics() -> None:
-    """Pull new TraceRecord rows since last scrape and update all metrics."""
+    """Pull new TraceRecord rows since last scrape and update all metrics.
+    
+    :param None: This function takes no parameters
+    :returns: None
+    :raises: May raise exceptions related to database connectivity or SQLAlchemy operations
+    """
     global _last_scraped_at
 
     session_maker = get_session_maker()
@@ -116,4 +126,10 @@ async def collect_metrics() -> None:
 
 
 def get_metrics_output() -> tuple[bytes, str]:
+    """Generate the latest metrics data and return it with the appropriate content type.
+    
+    :param None: This function takes no parameters
+    :returns: A tuple containing the metrics data as bytes and the content type string
+    :rtype: tuple[bytes, str]
+    """
     return generate_latest(REGISTRY), CONTENT_TYPE_LATEST
