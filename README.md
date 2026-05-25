@@ -110,7 +110,7 @@ curl http://localhost:8000/api/v1/upload/<file_id>/status \
 | Service | Repo | Default port | Purpose |
 |---|---|---|---|
 | `dialogue-agent` (this) | — | `8000` | LangGraph orchestrator, SSE streaming, history search |
-| `dialogue-agent-mcp` | — | configured via `MCP_SERVER_URL` | MCP tool server — exposes internal tools |
+| `dialogue-agent-mcp` | [dialogue-agent-mcp](https://github.com/GoodchildTrevor/dialogue-agent-mcp) | configured via `MCP_SERVER_URL` | MCP tool server — exposes internal tools |
 | `qdrant-ingester` | [qdrant-ingester](https://github.com/GoodchildTrevor/qdrant-ingester) | `8000` (internal) | Chunks uploaded files, embeds and upserts into Qdrant |
 | `postgres` | pgvector/pgvector:pg16 | `5432` (internal) | Stores messages, embeddings, file metadata |
 
@@ -138,11 +138,11 @@ LIMIT 5;
 
 ## Monitoring
 
-The stack ships with Prometheus and the configuration for Grafana dashboards:
+The application exposes a Prometheus-compatible `/metrics` endpoint. Prometheus is included in the `docker-compose.yml` and scrapes the app automatically — it is available at `http://localhost:9090`.
 
-- Prometheus scrapes `/metrics` on the app and is available at `http://localhost:9090`.
-- Grafana dashboard configs are in `grafana/`.
-- Retention is set to 30 days (`--storage.tsdb.retention.time=30d`).
+Dashboard configs for Grafana are provided in the `grafana/` directory. To use them, connect your own Grafana instance to the Prometheus data source at `http://localhost:9090` and import the JSON files from `grafana/`.
+
+Retention is set to 30 days (`--storage.tsdb.retention.time=30d`).
 
 ## Running tests
 
