@@ -16,33 +16,14 @@ logger = logging.getLogger(__name__)
 
 @dataclass(slots=True)
 class ToolContext:
-    """Context passed to tool invocations containing user/session info and status callback.
-
-    Provides structured access to user identification, session state,
-    and an optional asynchronous status emitter for progress reporting
-    during tool execution.
-
-    :param user_id: Unique identifier for the user making the request.
-    :param state: Dictionary holding the current session/conversation state.
-    :param emit_status: Optional async callback invoked to report progress
-        updates back to the client during long-running tool calls.
-    """
+    """Context passed to tool invocations containing user/session info and status callback."""
     user_id: str
     state: dict[str, Any]
     emit_status: Callable[[str], Awaitable[None]] | None = None
 
 
 def _normalize_content(content: Any) -> tuple[str, list[dict[str, str]]]:
-    """Normalise MCP tool output to a plain string and separate images.
-
-    fastmcp may return content as a list of TextContent objects, a single
-    object with a ``text`` attribute, a plain string, or a dict.  This
-    helper separates text content from image data so images can be handled
-    separately while the orchestrator LLM receives readable text.
-
-    :param content: Raw content returned by the MCP client.
-    :returns: A tuple of (text_content: str, images: list[dict]).
-    """
+    """Normalise MCP tool output to a plain string and separate images."""
     text_parts: list[str] = []
     images: list[dict[str, str]] = []
 
@@ -66,7 +47,6 @@ def _normalize_content(content: Any) -> tuple[str, list[dict[str, str]]]:
                 text_parts.append(str(item))
 
     if isinstance(content, str):
-        # Check for inline image data embedded in a string (e.g. from MCP text serialization)
         if re.search(r"type\s*=?\s*['\"]image['\"]", content, re.IGNORECASE):
             data_matches = list(re.finditer(r"data\s*=\s*['\"]([A-Za-z0-9+/=]+)['\"]", content))
             if data_matches:
@@ -100,11 +80,6 @@ class ToolRegistry:
     """
 
     def __init__(self, settings: Settings, mcp_client: MCPClient) -> None:
-        """Initialise the registry with configuration and an MCP client.
-
-        :param settings: Application configuration containing MCP server URL and timeouts.
-        :param mcp_client: An MCPClient instance used to list and invoke remote tools.
-        """
         self._settings = settings
         self._mcp_client = mcp_client
         self._tools: dict[str, dict[str, Any]] = {}
@@ -112,53 +87,27 @@ class ToolRegistry:
         self._refresh_lock = asyncio.Lock()
 
     async def startup(self) -> None:
-        """Start the MCP client connection.
-
-        Enters the async context manager so the underlying HTTP transport
-        is initialised and ready for tool discovery / invocation calls.
-        """
-        await self._mcp_client.__aenter__()
+        """Warm up the tool registry by fetching the tool list from MCP server."""
+        await self.refresh_tools()
 
     async def shutdown(self) -> None:
-        """Gracefully close the MCP client connection.
-
-        Exits the async context manager, releasing the HTTP transport
-        and cleaning up any lingering resources.
-        """
-        await self._mcp_client.__aexit__(None, None, None)
+        """No-op: per-call transport requires no persistent teardown."""
 
     def has_tool(self, name: str) -> bool:
-        """Check whether a tool with the given name is currently registered.
-
-        :param name: The tool identifier to look up.
-        :returns: True if the tool exists in the internal registry, False otherwise.
-        """
         return name in self._tools
 
     @property
     def is_empty(self) -> bool:
-        """Indicate whether the registry holds no tools.
-
-        :returns: True if the internal tool dictionary is empty.
-        :rtype: bool
-        """
         return len(self._tools) == 0
 
     async def refresh_tools(self) -> None:
-        """Fetch available tools from MCP server and cache them.
-
-        Queries the remote MCP server for the current list of tools,
-        replaces the internal registry, and invalidates the description
-        cache so the next :meth:`describe_for_model` call regenerates it.
-
-        On failure the internal tool dictionary is cleared and the error
-        is logged.
-        """
-        async with self._refresh_lock:  
+        """Fetch available tools from MCP server and cache them."""
+        async with self._refresh_lock:
             if not self.is_empty:
                 return
             try:
-                tools_list = await self._mcp_client.list_tools()
+                async with self._mcp_client as client:
+                    tools_list = await client.list_tools()
                 new_tools = {}
                 for tool in tools_list:
                     tool_name = tool.get("name") if isinstance(tool, dict) else getattr(tool, "name", None)
@@ -171,19 +120,7 @@ class ToolRegistry:
                 logger.error("Failed to refresh tools from MCP server: %s", e)
 
     def describe_for_model(self) -> list[dict[str, Any]]:
-        """Return tool descriptions in a format suitable for LLM consumption.
-
-        Each element in the returned list is a dictionary with the keys:
-
-            - ``name`` (str) – the tool identifier
-            - ``description`` (str) – human-readable purpose of the tool
-            - ``parameters`` (dict) – the JSON Schema describing accepted inputs
-
-        The result is cached on the first call and returned unchanged on
-        subsequent calls until :meth:`refresh_tools` invalidates the cache.
-
-        :returns: A list of tool description dictionaries.
-        """
+        """Return tool descriptions in a format suitable for LLM consumption."""
         if self._descriptions_cache is not None:
             return self._descriptions_cache
 
@@ -212,23 +149,7 @@ class ToolRegistry:
         arguments: dict[str, Any],
         context: ToolContext,
     ) -> ToolExecutionResult:
-        """Invoke a tool by name with the given arguments and context.
-
-        If the tool is not registered a failure result is returned without
-        contacting the MCP server. On success the tool output is normalised
-        into a plain string so the orchestrator LLM can always read it,
-        regardless of the raw shape returned by the MCP client (list of
-        TextContent objects, a single object, a plain string, or a dict).
-
-        :param tool_name: Identifier of the tool to invoke.
-        :param arguments: Key-value pairs passed as input to the tool.
-        :param context: Context object carrying user info, session state,
-            and an optional status emitter.
-        :returns: A dictionary describing the outcome of the invocation.
-            On success the ``ok`` key is ``True`` and ``result`` holds
-            ``{"content": <str>, "images": <list[dict]>}``.  On failure ``ok`` is ``False`` and
-            ``error`` contains a ``message`` describing the problem.
-        """
+        """Invoke a tool by name with the given arguments and context."""
         if tool_name not in self._tools:
             logger.warning("Unknown tool requested: %s", tool_name)
             return {
@@ -243,18 +164,14 @@ class ToolRegistry:
 
             logger.debug("Invoking tool %s with arguments: %r", tool_name, arguments)
 
-            raw = await self._mcp_client.call_tool(tool_name, arguments=arguments)
+            async with self._mcp_client as client:
+                raw = await client.call_tool(tool_name, arguments=arguments)
 
-            # Extract the raw content field from whatever the MCP client returned.
             if isinstance(raw, dict):
                 raw_content = raw.get("content", raw)
             else:
                 raw_content = getattr(raw, "content", raw)
 
-            # Separate text content from images so images can be handled separately
-            # while the orchestrator LLM receives readable text.
-            text_content: str
-            image_data: list[dict[str, str]]
             text_content, image_data = _normalize_content(raw_content)
 
             logger.debug("Tool %s result (preview): %.300s", tool_name, text_content)
@@ -269,14 +186,8 @@ class ToolRegistry:
             }
 
         except Exception as e:
-            # Log full traceback for diagnostics
             logger.exception("Tool invocation failed: %s", tool_name)
 
-            # Provide a more actionable error message for common JSON/binary
-            # serialization problems (for example tools returning raw image
-            # bytes instead of a base64 encoded string). fastmcp raises a
-            # ToolError in these cases which ends up here as a generic
-            # Exception; inspect the message to give a clearer hint.
             raw_err = str(e)
             lower = raw_err.lower()
             if "invalid utf-8" in lower or "invalid utf8" in lower or "error serializ" in lower or "cannot encode" in lower:
