@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     FILE_AUTO_ATTACH_MINUTES: int = 30
 
     LLM_BASE_URL: str
+    LITELLM_MASTER_KEY: str = ""  # Bearer token for LiteLLM proxy auth
     ROUTER_MODEL: str
     REASONING_MODEL: str
 
