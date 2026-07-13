@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import logging
+
 import httpx
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 
 class QdrantIngesterClient:
@@ -32,11 +36,19 @@ class QdrantIngesterClient:
         if inline_threshold is not None:
             payload["inline_threshold"] = inline_threshold
 
+        logger.debug("QdrantIngesterClient.ingest payload: %s", payload)
+
         async with httpx.AsyncClient(timeout=300) as client:
             response = await client.post(
                 f"{self.base_url}/ingest",
                 headers={"X-API-Key": self.api_key},
                 json=payload,
             )
+            if not response.is_success:
+                logger.error(
+                    "QdrantIngesterClient.ingest error %s: %s",
+                    response.status_code,
+                    response.text,
+                )
             response.raise_for_status()
             return response.json()
