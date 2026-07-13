@@ -57,7 +57,7 @@ class ToolExecutorNode():
         """Execute all pending tool calls and return the results.
 
         :param state: The current graph state containing pending tool calls.
-        :returns: A dictionary with tool results, updated retry counts, images, and next action.
+        :returns: A dictionary with tool results, updated retry counts, images, sources, and next action.
         """
         tool_calls = state.get("pending_tool_calls", [])
         payload = {"tool_calls": tool_calls}
@@ -154,11 +154,28 @@ class ToolExecutorNode():
                 if m:
                     new_images.append({"data": m.group(1), "mime_type": "image/png"})
 
+        # Collect sources from document_searcher results
+        new_sources: list[dict[str, Any]] = []
+        for call, r in zip(tool_calls, results):
+            if not r.get("ok"):
+                continue
+            if call.get("tool") != "document_searcher":
+                continue
+            res = r.get("result") or {}
+            if isinstance(res, dict):
+                for item in res.get("results", []):
+                    new_sources.append({
+                        "source": item.get("metadata", {}).get("source") or item.get("id", ""),
+                        "url": item.get("metadata", {}).get("url", ""),
+                        "score": item.get("score", 0.0),
+                    })
+
         logger.debug(
-            "[%s] tool_executor: appending step with %d call(s), %d error(s)",
+            "[%s] tool_executor: appending step with %d call(s), %d error(s), %d source(s)",
             state["request_id"],
             len(tool_calls),
             len(errors),
+            len(new_sources),
         )
 
         update: dict[str, Any] = {
@@ -167,6 +184,7 @@ class ToolExecutorNode():
             "pending_tool_calls": [],
             "context": state.get("context", {}),
             "images": new_images,
+            "sources": new_sources,
         }
         if errors:
             retries = state.get("tool_retry_count", 0) + 1

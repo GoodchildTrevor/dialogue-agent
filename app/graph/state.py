@@ -33,3 +33,4 @@ class AssistantState(TypedDict, total=False):
     status_queue: asyncio.Queue[str] | None
     uploaded_files: list[dict[str, str]] | None  # [{"file_id": "...", "filename": "..."}]
     images: Annotated[list[dict[str, str]], operator.add]  # [{"mime_type": "...", "data": "..."}]
+    sources: Annotated[list[dict[str, Any]], operator.add]  # [{"source": "...", "url": "...", "score": 0.0}]

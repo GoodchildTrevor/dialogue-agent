@@ -17,6 +17,13 @@ class ImageData(BaseModel):
     data: str  # base64
 
 
+class SourceData(BaseModel):
+    source: str
+    url: str = ""
+    score: float = 0.0
+
+
 class ChatResponse(BaseModel):
     answer: str
     images: list[ImageData] = Field(default_factory=list)
+    sources: list[SourceData] = Field(default_factory=list)

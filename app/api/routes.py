@@ -228,7 +228,7 @@ async def chat(
     :param payload: The chat request containing user_id, message, and optional uploaded_files.
     :param request: The FastAPI Request object providing access to app state and settings.
     :param api_key: Validated API key from the X-API-Key header (auto-checked via dependency).
-    :returns: A ChatResponse containing the assistant's answer and any images.
+    :returns: A ChatResponse containing the assistant's answer, images, and sources.
     """
     settings: Settings = request.app.state.settings
     logger.info("CHAT uploaded_files: %s", payload.uploaded_files)
@@ -253,6 +253,7 @@ async def chat(
     result = await runtime.run(state)
     answer = result.get("final_answer", "")
     images = result.get("images") or []
+    sources = result.get("sources") or []
 
     asyncio.create_task(
         _save_and_embed(
@@ -263,7 +264,7 @@ async def chat(
         )
     )
 
-    return ChatResponse(answer=answer, images=images)
+    return ChatResponse(answer=answer, images=images, sources=sources)
 
 
 @router.post("/stream")
@@ -322,6 +323,7 @@ async def stream(
             result = await task
             answer = result.get("final_answer", "")
             images = result.get("images") or []
+            sources = result.get("sources") or []
 
             asyncio.create_task(
                 _save_and_embed(
@@ -332,7 +334,7 @@ async def stream(
                 )
             )
 
-            yield _sse({"answer": answer, "images": images})
+            yield _sse({"answer": answer, "images": images, "sources": sources})
             yield "data: [DONE]\n\n"
 
         except Exception as exc:
