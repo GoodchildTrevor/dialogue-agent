@@ -63,6 +63,7 @@ async def lifespan(app: FastAPI):
         pg_ingester=pg_ingester,
         qdrant_ingester=qdrant_ingester,
         settings=settings,
+        llm_client=llm,  # passed so SummarizationService can be instantiated
     )
 
     app.state.runtime = runtime

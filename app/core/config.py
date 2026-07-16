@@ -81,6 +81,15 @@ class Settings(BaseSettings):
     HTTP_MAX_CONNECTIONS: int = 100
     HISTORY_SEARCH_LIMIT: int = 5
 
+    # --- Document summarization ---
+    # Set to a LiteLLM model alias to enable background summarization of large files.
+    # Leave empty to disable the feature entirely.
+    # Example: SUMMARIZATION_MODEL=qwen2.5-0.5b-instruct
+    SUMMARIZATION_MODEL: str = ""
+    # Maximum number of characters of file text fed to the summarization model.
+    # The full text is used up to this limit; beyond it the text is truncated.
+    SUMMARIZATION_MAX_INPUT_CHARS: int = 64000
+
     @property
     def mcp_servers_list(self) -> list[dict[str, Any]]:
         """Return the full ordered list of MCP server configs.

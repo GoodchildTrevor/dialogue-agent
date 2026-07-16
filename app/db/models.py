@@ -20,15 +20,22 @@ class File(Base):
     """Registry of uploaded files. Binary content lives on the local volume at storage_path.
 
     Lifecycle (status field):
-      pending  → file saved to storage, not yet sent to chunker
+      pending   → file saved to storage, not yet sent to chunker
       upserting → request sent to qdrant-ingester
-      indexed  → qdrant-ingester finished successfully
-      error    → processing failed; see error_message for details
+      indexed   → qdrant-ingester finished successfully
+      error     → processing failed; see error_message for details
 
     inline_text:
       Set only when the file is small enough to fit within INLINE_THRESHOLD tokens.
       In that case the full document text is stored here and Qdrant upsert is skipped.
       NULL means the file was chunked and indexed in Qdrant normally.
+
+    Summary fields (summary_status lifecycle):
+      pending → summary task has been enqueued but not yet completed
+      ready   → summary_text and summary_keywords are populated
+      failed  → summarization failed; original ingestion is unaffected
+      NULL    → summarization is disabled (SUMMARIZATION_MODEL not set)
+               or the file was small enough to be inlined
     """
     __tablename__ = "files"
 
@@ -45,6 +52,13 @@ class File(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+    # --- Document summary (populated asynchronously after Qdrant ingestion) ---
+    summary_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    summary_keywords: Mapped[list[str] | None] = mapped_column(ARRAY(String), nullable=True)
+    summary_status: Mapped[str | None] = mapped_column(String(16), nullable=True, index=True)
+    summary_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    summary_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     messages: Mapped[list["Message"]] = relationship(back_populates="file", lazy="select")
 

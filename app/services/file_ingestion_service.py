@@ -9,10 +9,12 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
+from app.core.llm_client import LLMClient
 from app.db.models import File
 from app.db.session import get_session_maker
 from app.services.pg_ingester import IngesterService
 from app.services.qdrant_ingester_client import QdrantIngesterClient
+from app.services.summarization_service import SummarizationService
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +30,8 @@ class FileIngestionService:
          qdrant-ingester returns raw text instead of ingesting into Qdrant.
          In that case inline_text is saved to the DB for direct LLM injection.
     4. Update status to 'indexed'
+    5. If SUMMARIZATION_MODEL is set and the file was NOT inlined,
+       launch a background summarization task in parallel (best-effort).
     On exception: Update status to 'error' with error message
     """
 
@@ -36,10 +40,16 @@ class FileIngestionService:
         pg_ingester: IngesterService,
         qdrant_ingester: QdrantIngesterClient,
         settings: Settings,
+        llm_client: LLMClient | None = None,
     ) -> None:
         self.pg_ingester = pg_ingester
         self.qdrant_ingester = qdrant_ingester
         self.settings = settings
+        self._summarization: SummarizationService | None = (
+            SummarizationService(llm_client, settings)
+            if llm_client and settings.SUMMARIZATION_MODEL
+            else None
+        )
 
     async def process(self, file_id: uuid.UUID) -> None:
         """Process a file through the complete ingestion pipeline."""
@@ -93,6 +103,27 @@ class FileIngestionService:
                     session, file_id, "indexed", inline_text=inline_text
                 )
 
+            # --- Parallel background summarization for large (non-inline) files ---
+            if not inline_text and self._summarization:
+                raw_text: str | None = ingest_response.get("raw_text") or None
+                if raw_text:
+                    await self._update_summary_status(file_id, "pending")
+                    asyncio.create_task(
+                        self._summarization.summarize_file(
+                            file_id=file_id,
+                            full_text=raw_text,
+                        ),
+                        name=f"summarize-{file_id}",
+                    )
+                    logger.info(
+                        "Launched background summary task for file_id=%s", file_id
+                    )
+                else:
+                    logger.debug(
+                        "Skipping summary for file_id=%s: qdrant-ingester did not return raw_text",
+                        file_id,
+                    )
+
         except Exception as exc:
             logger.exception("Failed to process file_id=%s: %s", file_id, exc)
             async with get_session_maker()() as session:
@@ -127,3 +158,18 @@ class FileIngestionService:
         await session.execute(stmt)
         await session.commit()
         logger.info("Updated file %s status to %s", file_id, status)
+
+    async def _update_summary_status(
+        self,
+        file_id: uuid.UUID,
+        status: str,
+    ) -> None:
+        """Set summary_status on the File row (e.g. 'pending' before the bg task starts)."""
+        async with get_session_maker()() as session:
+            stmt = (
+                update(File)
+                .where(File.id == file_id)
+                .values(summary_status=status)
+            )
+            await session.execute(stmt)
+            await session.commit()
