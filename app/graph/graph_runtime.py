@@ -67,15 +67,19 @@ class GraphRuntime:
     - **tools** -- executes tool calls and collects results
     - **reasoning** -- performs deep reasoning via a strong LLM model
 
+    MCP servers are configured via ``settings.mcp_servers_list`` which
+    always includes the primary server first, followed by any additional
+    servers declared in the ``MCP_SERVERS`` env var (JSON array).
+    The legacy ``FILE_CONVERTER_MCP_URL`` is also supported and appended
+    automatically when set.
+
     :param settings: Application configuration from :class:`Settings`
     :param llm_client: Client for interacting with the LLM backend
 
     :ivar settings: The application settings instance
     :ivar llm_client: The LLM client instance
-    :ivar _mcp_client: MCP client for the primary tool server. Lazily initialized.
-    :ivar _file_converter_client: MCP client for the file converter server. ``None`` if not configured.
     :ivar tool_registry: Registry of available tools from the primary MCP server.
-    :ivar file_converter_registry: Registry of file conversion tools. ``None`` if not configured.
+    :ivar _all_registries: All ToolRegistry instances across all configured MCP servers.
     :ivar chunker_service: Client for the chunking service API.
     :ivar pg_ingester: Client for the PostgreSQL ingester service.
     :ivar history_service: Service for managing conversation history.
@@ -87,10 +91,8 @@ class GraphRuntime:
     """
     settings: Settings
     llm_client: LLMClient
-    _mcp_client: MCPClient | None = field(default=None, init=False)
-    _file_converter_client: MCPClient | None = field(default=None, init=False)
     tool_registry: ToolRegistry | None = field(default=None, init=False)
-    file_converter_registry: ToolRegistry | None = field(default=None, init=False)
+    _all_registries: list[ToolRegistry] = field(default_factory=list, init=False)
     chunker_service: ChunkerServiceClient = field(init=False)
     pg_ingester: IngesterService = field(init=False)
     history_service: HistoryService = field(init=False)
@@ -104,27 +106,28 @@ class GraphRuntime:
     def __post_init__(self) -> None:
         """Initialize clients, registries, nodes, and compile the graph.
 
-        Sets up the MCP transport and client, optionally connects to the
-        file converter MCP server, instantiates service clients and all
-        graph nodes, then builds and compiles the LangGraph state machine.
+        Iterates over all MCP server configs returned by
+        ``settings.mcp_servers_list`` and creates a :class:`ToolRegistry`
+        for each one. The first registry is stored as ``tool_registry``
+        for backward compatibility with code that references it directly.
+        All registries are passed to the orchestrator, tool executor, and
+        strong model nodes.
         """
-        transport = StreamableHttpTransport(
-            self.settings.MCP_SERVER_URL,
-            headers={"Authorization": f"Bearer {self.settings.MCP_AUTH_TOKEN}"},
-        )
-        self._mcp_client = MCPClient(transport)
-        self.tool_registry = ToolRegistry(self.settings, self._mcp_client)
-
-        registries: list[ToolRegistry] = [self.tool_registry]
-
-        if self.settings.FILE_CONVERTER_MCP_URL:
-            transport2 = StreamableHttpTransport(
-                self.settings.FILE_CONVERTER_MCP_URL,
-                headers={"Authorization": f"Bearer {self.settings.FILE_CONVERTER_AUTH_TOKEN}"},
+        for server_cfg in self.settings.mcp_servers_list:
+            transport = StreamableHttpTransport(
+                server_cfg["url"],
+                headers={"Authorization": f"Bearer {server_cfg['token']}"},
             )
-            self._file_converter_client = MCPClient(transport2)
-            self.file_converter_registry = ToolRegistry(self.settings, self._file_converter_client)
-            registries.append(self.file_converter_registry)
+            client = MCPClient(transport)
+            registry = ToolRegistry(
+                self.settings,
+                client,
+                name=server_cfg["name"],
+            )
+            self._all_registries.append(registry)
+
+        # Keep tool_registry pointing to the primary server for backward compat
+        self.tool_registry = self._all_registries[0] if self._all_registries else None
 
         self.chunker_service = ChunkerServiceClient(
             base_url=self.settings.CHUNKER_SERVICE_URL,
@@ -137,13 +140,13 @@ class GraphRuntime:
         self._orchestrator_node = OrchestratorNode(
             self.llm_client,
             self.settings,
-            registries,
+            self._all_registries,
             self.history_service,
         )
         self._tool_executor_node = ToolExecutorNode(
-            self.emit_status, self.settings, registries
+            self.emit_status, self.settings, self._all_registries
         )
-        self._strong_model_node = StrongModelNode(self.llm_client, self.settings, registries)
+        self._strong_model_node = StrongModelNode(self.llm_client, self.settings, self._all_registries)
         self.graph = self._build_graph()
 
     async def startup(self) -> None:
@@ -154,9 +157,8 @@ class GraphRuntime:
 
         :returns: None
         """
-        await self.tool_registry.startup()
-        if self.file_converter_registry:
-            await self.file_converter_registry.startup()
+        for registry in self._all_registries:
+            await registry.startup()
 
     async def shutdown(self) -> None:
         """Shutdown the runtime by closing MCP clients and releasing resources.
@@ -166,23 +168,19 @@ class GraphRuntime:
 
         :returns: None
         """
-        await self.tool_registry.shutdown()
-        if self.file_converter_registry:
-            await self.file_converter_registry.shutdown()
+        for registry in self._all_registries:
+            await registry.shutdown()
 
     async def refresh_tool_descriptions(self) -> None:
         """Refresh and cache the tool list from all connected MCP servers.
 
-        Fetches the latest tool definitions from both the primary and
-        file converter MCP servers (if configured) and updates the
-        respective registries with current tool descriptions and schemas.
+        Fetches the latest tool definitions from all configured MCP servers
+        and updates the respective registries.
 
         :returns: None
         """
-        if self.tool_registry:
-            await self.tool_registry.refresh_tools()
-        if self.file_converter_registry:
-            await self.file_converter_registry.refresh_tools()
+        for registry in self._all_registries:
+            await registry.refresh_tools()
 
     def build_initial_state(
         self,
@@ -249,10 +247,10 @@ class GraphRuntime:
     async def orchestrator_node(self, state: AssistantState) -> dict[str, Any]:
         """Execute the orchestrator node to plan and delegate tool calls.
 
-        Checks whether the tool registry has cached descriptions before
-        orchestration and refreshes them if empty. Then invokes the
-        internal orchestrator node to plan tool calls based on the
-        current state.
+        Checks whether the primary tool registry has cached descriptions
+        before orchestration and refreshes all registries if empty.
+        Then invokes the internal orchestrator node to plan tool calls
+        based on the current state.
 
         :param state: Current :class:`AssistantState` containing message
             history, context, and intermediate steps

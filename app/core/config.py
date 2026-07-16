@@ -1,4 +1,9 @@
+from __future__ import annotations
+
+import json
 from functools import lru_cache
+from typing import Any
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -36,11 +41,18 @@ class Settings(BaseSettings):
     ROUTER_MODEL: str
     REASONING_MODEL: str
 
+    # Primary MCP server (always loaded)
     MCP_SERVER_URL: str
     MCP_AUTH_TOKEN: str
 
+    # Legacy file-converter MCP (kept for backward compatibility; prefer MCP_SERVERS)
     FILE_CONVERTER_MCP_URL: str = ""
     FILE_CONVERTER_AUTH_TOKEN: str = ""
+
+    # Additional MCP servers as a JSON array:
+    # [{"url": "http://oracle-mcp:3000/mcp", "token": "secret", "name": "oracle"}, ...]
+    # The primary MCP_SERVER_URL is always prepended automatically.
+    MCP_SERVERS: str = "[]"
 
     POSTGRES_URL: str
 
@@ -68,6 +80,44 @@ class Settings(BaseSettings):
     REASONING_TIMEOUT_SECONDS: float = 300.0
     HTTP_MAX_CONNECTIONS: int = 100
     HISTORY_SEARCH_LIMIT: int = 5
+
+    @property
+    def mcp_servers_list(self) -> list[dict[str, Any]]:
+        """Return the full ordered list of MCP server configs.
+
+        The primary server (MCP_SERVER_URL / MCP_AUTH_TOKEN) is always
+        first. Servers declared in MCP_SERVERS are appended after.
+        The legacy FILE_CONVERTER_MCP_URL is appended last when set,
+        so existing deployments keep working without changes.
+
+        Each entry is a dict with keys:
+            - ``url``   -- full MCP endpoint URL
+            - ``token`` -- Bearer auth token (may be empty string)
+            - ``name``  -- human-readable label used in logs
+        """
+        servers: list[dict[str, Any]] = [
+            {"url": self.MCP_SERVER_URL, "token": self.MCP_AUTH_TOKEN, "name": "primary"},
+        ]
+
+        for entry in json.loads(self.MCP_SERVERS):
+            servers.append(
+                {
+                    "url": entry["url"],
+                    "token": entry.get("token", ""),
+                    "name": entry.get("name", entry["url"]),
+                }
+            )
+
+        if self.FILE_CONVERTER_MCP_URL:
+            servers.append(
+                {
+                    "url": self.FILE_CONVERTER_MCP_URL,
+                    "token": self.FILE_CONVERTER_AUTH_TOKEN,
+                    "name": "file-converter",
+                }
+            )
+
+        return servers
 
 
 @lru_cache(maxsize=1)

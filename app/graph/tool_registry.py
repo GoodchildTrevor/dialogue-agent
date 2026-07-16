@@ -77,11 +77,13 @@ class ToolRegistry:
 
     :param settings: Application configuration containing MCP server URL and timeouts.
     :param mcp_client: An MCPClient instance used to list and invoke remote tools.
+    :param name: Human-readable label for this registry, used in log messages.
     """
 
-    def __init__(self, settings: Settings, mcp_client: MCPClient) -> None:
+    def __init__(self, settings: Settings, mcp_client: MCPClient, name: str = "default") -> None:
         self._settings = settings
         self._mcp_client = mcp_client
+        self._name = name
         self._tools: dict[str, dict[str, Any]] = {}
         self._descriptions_cache: list[dict[str, Any]] | None = None
         self._refresh_lock = asyncio.Lock()
@@ -115,9 +117,9 @@ class ToolRegistry:
                         new_tools[tool_name] = tool
                 self._tools = new_tools
                 self._descriptions_cache = None
-                logger.info("Refreshed %d tools from MCP server", len(self._tools))
+                logger.info("Refreshed %d tools from MCP server '%s'", len(self._tools), self._name)
             except Exception as e:
-                logger.error("Failed to refresh tools from MCP server: %s", e)
+                logger.error("Failed to refresh tools from MCP server '%s': %s", self._name, e)
 
     def describe_for_model(self) -> list[dict[str, Any]]:
         """Return tool descriptions in a format suitable for LLM consumption."""
