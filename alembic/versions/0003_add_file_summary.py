@@ -26,7 +26,13 @@ def upgrade() -> None:
     )
     op.add_column(
         "files",
-        sa.Column("summary_status", sa.String(16), nullable=True, index=True),
+        sa.Column("summary_status", sa.String(16), nullable=True),
+    )
+    op.create_index(
+        "ix_files_summary_status",
+        "files",
+        ["summary_status"],
+        if_not_exists=True,
     )
     op.add_column(
         "files",
@@ -39,11 +45,6 @@ def upgrade() -> None:
             sa.DateTime(timezone=True),
             nullable=True,
         ),
-    )
-    op.create_index(
-        "ix_files_summary_status",
-        "files",
-        ["summary_status"],
     )
 
 
