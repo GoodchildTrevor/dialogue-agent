@@ -28,7 +28,8 @@ class Settings(BaseSettings):
     UPLOAD_STORAGE_DIR: str
     ALLOWED_MIME_TYPES: list[str] = [
         "application/pdf",
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     ]
 
     # When uploaded_files is empty in a chat/stream request, automatically attach

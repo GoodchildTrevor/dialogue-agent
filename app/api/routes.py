@@ -27,6 +27,10 @@ logger = logging.getLogger(__name__)
 
 api_key_header = APIKeyHeader(name="X-API-Key")
 
+# MIME type for .xlsx spreadsheets: analyzed via pandas/openpyxl by the Excel
+# MCP tools, never chunked into Qdrant (there is nothing to embed).
+_XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
 
 def get_settings_dep(request: Request) -> Settings:
     """Retrieve application settings from the FastAPI app state.
@@ -358,7 +362,9 @@ async def upload_files(
     """Upload one or more files and register them in the database for processing.
 
     Validates MIME types against allowed settings, saves files to disk, creates
-    database records with "pending" status, and triggers asynchronous file ingestion.
+    database records, and triggers asynchronous file ingestion - except for
+    .xlsx spreadsheets, which are analyzed via pandas/openpyxl by the Excel MCP
+    tools and are marked "indexed" immediately since there is nothing to chunk.
 
     :param request: The FastAPI Request object providing access to app state and settings.
     :param user_id: The identifier of the user uploading files (from form data).
@@ -391,6 +397,8 @@ async def upload_files(
                     raise HTTPException(413, f"{upload.filename} exceeds size limit")
                 await f.write(chunk)
 
+        is_xlsx = upload.content_type == _XLSX_MIME
+
         async with get_session_maker()() as session:
             db_file = FileModel(
                 id=file_id,
@@ -399,15 +407,20 @@ async def upload_files(
                 mime_type=upload.content_type,
                 storage_path=str(path),
                 size_bytes=size_bytes,
-                status="pending",
+                status="indexed" if is_xlsx else "pending",
             )
             session.add(db_file)
             await session.commit()
 
-        asyncio.create_task(
-            request.app.state.file_ingestion.process(file_id)
-        )
-        results.append({"file_id": str(file_id), "filename": safe_name, "status": "pending"})
+        if not is_xlsx:
+            asyncio.create_task(
+                request.app.state.file_ingestion.process(file_id)
+            )
+        results.append({
+            "file_id": str(file_id),
+            "filename": safe_name,
+            "status": db_file.status,
+        })
 
     return JSONResponse({"files": results})
 
