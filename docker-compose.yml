@@ -1,32 +1,40 @@
 services:
   app:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: /home/projects/enclave
+      dockerfile: dialogue-agent/Dockerfile
+    container_name: dialogue_agent
     env_file:
       - .env
     environment:
       - MCP_AUTH_TOKEN=${MCP_AUTH_TOKEN}
-    ports:
-      - "8000:8000"
     depends_on:
       - postgres
     volumes:
       - file_storage:/app/storage
+      - export_data:/shared-exports
+      - /home/projects/enclave/dialogue-agent/Qwen/Qwen3-Embedding-0.6B-ONNX:/app/models/Qwen3-Embedding-0.6B-ONNX:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
+    networks:
+      - ai_network
 
   test:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: /home/projects/enclave
+      dockerfile: dialogue-agent/Dockerfile.test
     command: pytest --tb=short -q
     env_file:
       - .env
+    volumes:
+      - /home/projects/enclave/dialogue-agent/Qwen/Qwen3-Embedding-0.6B-ONNX:/app/models/Qwen3-Embedding-0.6B-ONNX:ro
     profiles: ["test"]
+    networks:
+      - ai_network
 
   postgres:
+    container_name: dialogue_agent_postgres
     image: pgvector/pgvector:pg16
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
@@ -41,21 +49,42 @@ services:
       timeout: 5s
       retries: 5
     restart: unless-stopped
+    networks:
+      - ai_network
 
   prometheus:
+    container_name: dialogue_agent_prometheus
     image: prom/prometheus:v2.52.0
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
-    ports:
-      - "9090:9090"
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.retention.time=30d"
     depends_on:
       - app
+    networks:
+      - ai_network
 
 volumes:
   postgres_data:
   file_storage:
   prometheus_data:
+  # Shared with the file-converter-mcp stack's file-export-server, which is
+  # already proxied publicly at https://chat.ai.cemros.ru/files/. Writing
+  # edited spreadsheets here (see app/api/routes.py:_publish_for_download)
+  # lets us reuse that existing public file server instead of exposing a
+  # new unauthenticated route on the agent itself.
+  #
+  # TODO: verify the real Docker volume name for file-converter-mcp's
+  # "export-data" volume (`docker volume ls | grep export`) and fix `name:`
+  # below if it doesn't match - Compose V2 defaults to
+  # "{project_dir_name}_{volume_key}", assumed here to be the
+  # file-converter-mcp repo's directory name.
+  export_data:
+    external: true
+    name: file-converter-mcp_export-data
+
+networks:
+  ai_network:
+    external: true

@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 class UploadedFile(BaseModel):
     file_id: str
     filename: str
+    url: str | None = None
 
 
 class ChatRequest(BaseModel):

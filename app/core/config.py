@@ -37,6 +37,16 @@ class Settings(BaseSettings):
     # Set to 0 to disable auto-attach.
     FILE_AUTO_ATTACH_MINUTES: int = 30
 
+    # Shared Docker volume with the file-converter-mcp stack's
+    # file-export-server (mounted at /output there, /shared-exports here).
+    # Edited spreadsheets are copied here so the existing public
+    # "https://.../files/{folder}/{name}" endpoint can serve them without
+    # exposing a new unauthenticated route on the agent itself.
+    SHARED_EXPORT_DIR: str = "/shared-exports"
+    # Public base URL the exported files are reachable at (fronted by nginx,
+    # proxying /files/ to file-export-server - see file-converter-mcp repo).
+    PUBLIC_FILES_BASE_URL: str = "https://chat.ai.cemros.ru"
+
     LLM_BASE_URL: str
     LITELLM_MASTER_KEY: str = ""  # Bearer token for LiteLLM proxy auth
     ROUTER_MODEL: str
@@ -70,8 +80,8 @@ class Settings(BaseSettings):
     INLINE_THRESHOLD: int | None = None
 
     # Embedding (in-process via fastembed)
-    EMBEDDING_MODEL_NAME: str
     EMBEDDING_API_URL: str
+    EMBEDDING_MODEL_NAME: str
     EMBEDDING_BATCH_SIZE: int
     EMBEDDING_INSERT_BATCH_SIZE: int
 

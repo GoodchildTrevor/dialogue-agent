@@ -5,10 +5,13 @@ import json
 import logging
 import mimetypes
 import re
+import shutil
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import AsyncGenerator
+from urllib.parse import quote
 from uuid import uuid4
 
 import aiofiles
@@ -98,7 +101,9 @@ def _extract_modified_files(
     Inspects the graph's tool_results (ground truth from real tool calls,
     never trusting the model's own claims in free text) for successful
     fill_cells/fill_cell_by_index calls and returns the corresponding
-    {file_id, filename} entries, deduplicated by file_id.
+    {file_id, filename} entries, deduplicated by file_id. Does NOT attach a
+    download url yet - the caller awaits _publish_for_download() per entry,
+    since that involves file I/O and this function stays sync.
     """
     filename_by_id = {f["file_id"]: f["filename"] for f in (uploaded_files or [])}
     modified: dict[str, dict] = {}
@@ -118,6 +123,68 @@ def _extract_modified_files(
         }
 
     return list(modified.values())
+
+
+async def _publish_for_download(
+    storage_path: str,
+    filename: str,
+    export_dir: str,
+    public_base_url: str,
+) -> str | None:
+    """Copy an edited file into the shared export volume so file-export-server
+    (already proxied publicly at PUBLIC_FILES_BASE_URL/files/) can serve it,
+    and return the resulting public URL.
+
+    Reuses file-converter-mcp's existing public static-file server via a
+    shared Docker volume (settings.SHARED_EXPORT_DIR), instead of exposing a
+    second, unauthenticated download route on the agent itself. Uses the same
+    "export_{token}_{timestamp}/{filename}" folder-naming convention as
+    file-converter's own export links, so both are visually consistent.
+
+    Returns None (never raises) if the copy fails - a missing url just means
+    the bot falls back to attaching the file directly via BotX instead.
+    """
+    try:
+        token = uuid.uuid4().hex[:10]
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        folder_name = f"export_{token}_{timestamp}"
+        dest_dir = Path(export_dir) / folder_name
+        await asyncio.to_thread(dest_dir.mkdir, parents=True, exist_ok=True)
+        dest_path = dest_dir / filename
+
+        await asyncio.to_thread(shutil.copyfile, storage_path, dest_path)
+
+        return f"{public_base_url.rstrip('/')}/files/{folder_name}/{quote(filename)}"
+    except OSError as exc:
+        logger.warning("Failed to publish %s for download: %s", filename, exc)
+        return None
+
+
+async def _attach_download_urls(modified_files: list[dict], settings: Settings) -> list[dict]:
+    """Populate the "url" field of each modified_files entry in-place.
+
+    Looks up each file's current storage_path from the database (the same
+    path the Excel MCP tools edit in place) and publishes a copy to the
+    shared export volume.
+    """
+    if not modified_files:
+        return modified_files
+
+    async with get_session_maker()() as session:
+        ids = [uuid.UUID(mf["file_id"]) for mf in modified_files]
+        stmt = select(FileModel.id, FileModel.storage_path).where(FileModel.id.in_(ids))
+        result = await session.execute(stmt)
+        path_by_id = {str(row.id): row.storage_path for row in result.fetchall()}
+
+    for mf in modified_files:
+        storage_path = path_by_id.get(mf["file_id"])
+        if not storage_path or not Path(storage_path).exists():
+            continue
+        mf["url"] = await _publish_for_download(
+            storage_path, mf["filename"], settings.SHARED_EXPORT_DIR, settings.PUBLIC_FILES_BASE_URL
+        )
+
+    return modified_files
 
 
 def get_settings_dep(request: Request) -> Settings:
@@ -349,6 +416,7 @@ async def chat(
     images = result.get("images") or []
     sources = result.get("sources") or []
     modified_files = _extract_modified_files(result.get("tool_results"), enriched_files)
+    modified_files = await _attach_download_urls(modified_files, settings)
 
     asyncio.create_task(
         _save_and_embed(
@@ -420,6 +488,7 @@ async def stream(
             images = result.get("images") or []
             sources = result.get("sources") or []
             modified_files = _extract_modified_files(result.get("tool_results"), enriched_files)
+            modified_files = await _attach_download_urls(modified_files, settings)
 
             asyncio.create_task(
                 _save_and_embed(
