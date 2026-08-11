@@ -66,6 +66,29 @@ def _resolve_content_type(filename: str | None, content_type: str | None) -> str
     return guessed or _EXTENSION_MIME_FALLBACK.get(suffix, content_type)
 
 
+def _unwrap_mcp_payload(result: dict | None) -> dict:
+    """Unwrap the raw MCP tool-call envelope into the tool's actual JSON payload.
+
+    tool_executor stores MCP results as-is: {"content": "<json text>",
+    "images": [...]}. The useful fields the tool returned (e.g. "status",
+    "file_id") are inside that JSON-encoded string under "content", not at
+    the top level of the dict. Reading `result.get("file_id")` directly
+    always returns None and silently drops every successful edit - this was
+    why modified_files came back empty even when fill_cell_by_index/fill_cells
+    succeeded (confirmed ok=True in tool_executor logs).
+    """
+    if not isinstance(result, dict):
+        return {}
+    content = result.get("content")
+    if not isinstance(content, str):
+        return result
+    try:
+        parsed = json.loads(content)
+    except (json.JSONDecodeError, TypeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
 def _extract_modified_files(
     tool_results: list[dict] | None,
     uploaded_files: list[dict] | None,
@@ -83,7 +106,7 @@ def _extract_modified_files(
     for tr in tool_results or []:
         if tr.get("tool") not in _EXCEL_WRITE_TOOLS or not tr.get("ok"):
             continue
-        payload = tr.get("result") or {}
+        payload = _unwrap_mcp_payload(tr.get("result"))
         if payload.get("status") not in _EXCEL_WRITE_STATUSES:
             continue
         file_id = payload.get("file_id")
@@ -140,7 +163,7 @@ async def _save_and_embed(
 ) -> None:
     """Save user + assistant messages to PostgreSQL and embed them asynchronously.
 
-    Runs as a fire-and-forget task — never raises to the caller.
+    Runs as a fire-and-forget task - never raises to the caller.
 
     :param runtime: The GraphRuntime instance providing service access.
     :param user_id: The identifier of the user whose messages are being saved.
@@ -273,6 +296,7 @@ async def _auto_attach_recent_files(user_id: str, minutes: int) -> list[Uploaded
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
+
 
 @router.get("/healthz")
 async def healthz() -> JSONResponse:
