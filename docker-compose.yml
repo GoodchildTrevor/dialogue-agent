@@ -71,19 +71,17 @@ volumes:
   file_storage:
   prometheus_data:
   # Shared with the file-converter-mcp stack's file-export-server, which is
-  # already proxied publicly at https://chat.ai.cemros.ru/files/. Writing
+  # already proxied publicly (see PUBLIC_FILES_BASE_URL in .env). Writing
   # edited spreadsheets here (see app/api/routes.py:_publish_for_download)
-  # lets us reuse that existing public file server instead of exposing a
-  # new unauthenticated route on the agent itself.
+  # reuses that existing public file server instead of exposing a new
+  # unauthenticated route on the agent itself.
   #
-  # TODO: verify the real Docker volume name for file-converter-mcp's
-  # "export-data" volume (`docker volume ls | grep export`) and fix `name:`
-  # below if it doesn't match - Compose V2 defaults to
-  # "{project_dir_name}_{volume_key}", assumed here to be the
-  # file-converter-mcp repo's directory name.
+  # Real Docker volume name comes from .env (EXPORT_VOLUME_NAME) - find it
+  # via `docker volume ls | grep export` on the host, it varies per
+  # environment/project layout so it must not be hardcoded here.
   export_data:
     external: true
-    name: file-converter-mcp_export-data
+    name: ${EXPORT_VOLUME_NAME}
 
 networks:
   ai_network:
