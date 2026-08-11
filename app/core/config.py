@@ -71,6 +71,7 @@ class Settings(BaseSettings):
 
     # Embedding (in-process via fastembed)
     EMBEDDING_MODEL_NAME: str
+    EMBEDDING_API_URL: str
     EMBEDDING_BATCH_SIZE: int
     EMBEDDING_INSERT_BATCH_SIZE: int
 
