@@ -38,14 +38,12 @@ class Settings(BaseSettings):
     FILE_AUTO_ATTACH_MINUTES: int = 30
 
     # Shared Docker volume with the file-converter-mcp stack's
-    # file-export-server (mounted at /output there, /shared-exports here).
-    # Edited spreadsheets are copied here so the existing public
-    # "https://.../files/{folder}/{name}" endpoint can serve them without
-    # exposing a new unauthenticated route on the agent itself.
-    SHARED_EXPORT_DIR: str = "/shared-exports"
-    # Public base URL the exported files are reachable at (fronted by nginx,
-    # proxying /files/ to file-export-server - see file-converter-mcp repo).
-    PUBLIC_FILES_BASE_URL: str = "https://chat.ai.cemros.ru"
+    # file-export-server (mounted at /output there). Edited spreadsheets are
+    # copied here so its existing public file endpoint can serve them without
+    # exposing a new unauthenticated route on the agent itself. No hardcoded
+    # default - both are environment-specific and must come from .env.
+    SHARED_EXPORT_DIR: str
+    PUBLIC_FILES_BASE_URL: str
 
     LLM_BASE_URL: str
     LITELLM_MASTER_KEY: str = ""  # Bearer token for LiteLLM proxy auth
