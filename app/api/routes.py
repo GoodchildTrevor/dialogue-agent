@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import mimetypes
 import re
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -30,6 +31,34 @@ api_key_header = APIKeyHeader(name="X-API-Key")
 # MIME type for .xlsx spreadsheets: analyzed via pandas/openpyxl by the Excel
 # MCP tools, never chunked into Qdrant (there is nothing to embed).
 _XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+# Some upstream bot bridges (e.g. BotX) report a generic content_type for
+# extensions their local mimetypes database doesn't know about, instead of
+# the real MIME type. Fall back to guessing from the filename extension in
+# that case rather than rejecting a legitimate file with 415.
+_GENERIC_CONTENT_TYPES = {None, "", "application/octet-stream"}
+_EXTENSION_MIME_FALLBACK = {
+    ".xlsx": _XLSX_MIME,
+    ".xlsm": "application/vnd.ms-excel.sheet.macroEnabled.12",
+    ".pdf": "application/pdf",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+}
+
+
+def _resolve_content_type(filename: str | None, content_type: str | None) -> str | None:
+    """Return the MIME type to actually use for a given upload.
+
+    If the client-reported content_type is missing or a generic
+    "application/octet-stream" placeholder, guess it from the filename
+    extension instead (stdlib mimetypes first, then a small local fallback
+    table for extensions not always present in mimetypes.types_map).
+    """
+    if content_type not in _GENERIC_CONTENT_TYPES:
+        return content_type
+
+    suffix = Path(filename or "").suffix.lower()
+    guessed, _ = mimetypes.guess_type(filename or "")
+    return guessed or _EXTENSION_MIME_FALLBACK.get(suffix, content_type)
 
 
 def get_settings_dep(request: Request) -> Settings:
@@ -376,12 +405,18 @@ async def upload_files(
     settings = request.app.state.settings
     max_bytes = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
 
+    resolved_types = {
+        id(upload): _resolve_content_type(upload.filename, upload.content_type)
+        for upload in files
+    }
     for upload in files:
-        if upload.content_type not in settings.ALLOWED_MIME_TYPES:
-            raise HTTPException(415, f"Unsupported type: {upload.content_type}")
+        resolved = resolved_types[id(upload)]
+        if resolved not in settings.ALLOWED_MIME_TYPES:
+            raise HTTPException(415, f"Unsupported type: {resolved}")
 
     results = []
     for upload in files:
+        content_type = resolved_types[id(upload)]
         file_id = uuid4()
         safe_name = _sanitize_filename(upload.filename or "upload")
         path = Path(settings.UPLOAD_STORAGE_DIR) / user_id / f"{file_id}_{safe_name}"
@@ -397,14 +432,14 @@ async def upload_files(
                     raise HTTPException(413, f"{upload.filename} exceeds size limit")
                 await f.write(chunk)
 
-        is_xlsx = upload.content_type == _XLSX_MIME
+        is_xlsx = content_type == _XLSX_MIME
 
         async with get_session_maker()() as session:
             db_file = FileModel(
                 id=file_id,
                 user_id=user_id,
                 original_name=upload.filename,
-                mime_type=upload.content_type,
+                mime_type=content_type,
                 storage_path=str(path),
                 size_bytes=size_bytes,
                 status="indexed" if is_xlsx else "pending",
