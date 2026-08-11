@@ -13,7 +13,7 @@ from uuid import uuid4
 
 import aiofiles
 from fastapi import APIRouter, Request, Depends, HTTPException, Form, File, UploadFile
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.security import APIKeyHeader
 from sqlalchemy import select
 
@@ -44,6 +44,11 @@ _EXTENSION_MIME_FALLBACK = {
     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 }
 
+# Excel MCP tools whose successful result means a file on disk was modified
+# and should be offered back to the user as a download/attachment.
+_EXCEL_WRITE_TOOLS = {"fill_cells", "fill_cell_by_index"}
+_EXCEL_WRITE_STATUSES = {"ok", "updated", "appended"}
+
 
 def _resolve_content_type(filename: str | None, content_type: str | None) -> str | None:
     """Return the MIME type to actually use for a given upload.
@@ -59,6 +64,37 @@ def _resolve_content_type(filename: str | None, content_type: str | None) -> str
     suffix = Path(filename or "").suffix.lower()
     guessed, _ = mimetypes.guess_type(filename or "")
     return guessed or _EXTENSION_MIME_FALLBACK.get(suffix, content_type)
+
+
+def _extract_modified_files(
+    tool_results: list[dict] | None,
+    uploaded_files: list[dict] | None,
+) -> list[dict]:
+    """Determine which uploaded files were actually modified this turn.
+
+    Inspects the graph's tool_results (ground truth from real tool calls,
+    never trusting the model's own claims in free text) for successful
+    fill_cells/fill_cell_by_index calls and returns the corresponding
+    {file_id, filename} entries, deduplicated by file_id.
+    """
+    filename_by_id = {f["file_id"]: f["filename"] for f in (uploaded_files or [])}
+    modified: dict[str, dict] = {}
+
+    for tr in tool_results or []:
+        if tr.get("tool") not in _EXCEL_WRITE_TOOLS or not tr.get("ok"):
+            continue
+        payload = tr.get("result") or {}
+        if payload.get("status") not in _EXCEL_WRITE_STATUSES:
+            continue
+        file_id = payload.get("file_id")
+        if not file_id:
+            continue
+        modified[file_id] = {
+            "file_id": file_id,
+            "filename": filename_by_id.get(file_id, f"{file_id}.xlsx"),
+        }
+
+    return list(modified.values())
 
 
 def get_settings_dep(request: Request) -> Settings:
@@ -261,7 +297,8 @@ async def chat(
     :param payload: The chat request containing user_id, message, and optional uploaded_files.
     :param request: The FastAPI Request object providing access to app state and settings.
     :param api_key: Validated API key from the X-API-Key header (auto-checked via dependency).
-    :returns: A ChatResponse containing the assistant's answer, images, and sources.
+    :returns: A ChatResponse containing the assistant's answer, images, sources, and any
+        files that were modified as a result of this turn's tool calls.
     """
     settings: Settings = request.app.state.settings
     logger.info("CHAT uploaded_files: %s", payload.uploaded_files)
@@ -287,6 +324,7 @@ async def chat(
     answer = result.get("final_answer", "")
     images = result.get("images") or []
     sources = result.get("sources") or []
+    modified_files = _extract_modified_files(result.get("tool_results"), enriched_files)
 
     asyncio.create_task(
         _save_and_embed(
@@ -297,7 +335,7 @@ async def chat(
         )
     )
 
-    return ChatResponse(answer=answer, images=images, sources=sources)
+    return ChatResponse(answer=answer, images=images, sources=sources, modified_files=modified_files)
 
 
 @router.post("/stream")
@@ -357,6 +395,7 @@ async def stream(
             answer = result.get("final_answer", "")
             images = result.get("images") or []
             sources = result.get("sources") or []
+            modified_files = _extract_modified_files(result.get("tool_results"), enriched_files)
 
             asyncio.create_task(
                 _save_and_embed(
@@ -367,7 +406,7 @@ async def stream(
                 )
             )
 
-            yield _sse({"answer": answer, "images": images, "sources": sources})
+            yield _sse({"answer": answer, "images": images, "sources": sources, "modified_files": modified_files})
             yield "data: [DONE]\n\n"
 
         except Exception as exc:
@@ -498,3 +537,41 @@ async def file_status(
         "error": error_message,
         "inline_text": inline_text,  # None if file was chunked into Qdrant
     })
+
+
+@router.get("/files/{file_id}")
+async def download_file(
+    file_id: uuid.UUID,
+    request: Request,
+    api_key: str = Depends(get_api_key),
+) -> FileResponse:
+    """Download the current bytes of a previously uploaded/modified file.
+
+    Serves directly from storage_path on disk - the same file that the Excel
+    MCP tools edit in place, so this always reflects the latest saved state
+    without any extra round trip to the MCP service.
+
+    :param file_id: The UUID of the file to download.
+    :param request: The FastAPI Request object providing access to app state.
+    :param api_key: Validated API key from the X-API-Key header (auto-checked via dependency).
+    :returns: A FileResponse streaming the file's current bytes.
+    :raises HTTPException: 404 Not Found if no file matches the given ID or it is missing on disk.
+    """
+    async with get_session_maker()() as session:
+        stmt = select(
+            FileModel.storage_path,
+            FileModel.original_name,
+            FileModel.mime_type,
+        ).where(FileModel.id == file_id)
+        result = await session.execute(stmt)
+        row = result.fetchone()
+
+    if not row:
+        raise HTTPException(404, "File not found")
+
+    storage_path, original_name, mime_type = row
+    path = Path(storage_path)
+    if not path.exists():
+        raise HTTPException(404, "File not found on disk")
+
+    return FileResponse(path, filename=original_name, media_type=mime_type)

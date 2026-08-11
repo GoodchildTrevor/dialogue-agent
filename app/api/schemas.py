@@ -27,3 +27,4 @@ class ChatResponse(BaseModel):
     answer: str
     images: list[ImageData] = Field(default_factory=list)
     sources: list[SourceData] = Field(default_factory=list)
+    modified_files: list[UploadedFile] = Field(default_factory=list)
