@@ -4,7 +4,7 @@ import logging
 import uuid
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from app.db.models import Message
 from app.db.session import get_session_maker
@@ -47,6 +47,24 @@ class HistoryService:
             await session.refresh(msg)
         logger.debug("Saved message %s (role=%s, user=%s)", msg.id, role, user_id)
         return msg.id
+
+    async def delete_history(self, user_id: str) -> int:
+        """Delete every saved message for a user. Used by the /reset command.
+
+        A message's embedding lives directly in the messages.embedding column
+        on the same row (unlike uploaded files, which are chunked into a
+        separate Qdrant collection) - so this single DELETE is enough to also
+        remove the user's history from search() with nothing left over in a
+        second store.
+
+        :param user_id: The identifier of the user whose history to wipe.
+        :returns: The number of message rows deleted.
+        """
+        async with get_session_maker()() as session:
+            result = await session.execute(delete(Message).where(Message.user_id == user_id))
+            await session.commit()
+        logger.info("Deleted %d message(s) for user %s", result.rowcount, user_id)
+        return result.rowcount
 
     # ------------------------------------------------------------------
     # Read / Search
