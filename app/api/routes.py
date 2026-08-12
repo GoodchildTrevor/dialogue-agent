@@ -5,13 +5,10 @@ import json
 import logging
 import mimetypes
 import re
-import shutil
-import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import AsyncGenerator
-from urllib.parse import quote
 from uuid import uuid4
 
 import aiofiles
@@ -48,8 +45,15 @@ _EXTENSION_MIME_FALLBACK = {
 }
 
 # Excel MCP tools whose successful result means a file on disk was modified
-# and should be offered back to the user as a download/attachment.
-_EXCEL_WRITE_TOOLS = {"fill_cells", "fill_cell_by_index"}
+# and should be offered back to the user as a download/attachment. Matches
+# every write tool dialogue-agent-mcp's excel.py exposes.
+_EXCEL_WRITE_TOOLS = {
+    "fill_cells",
+    "fill_cell_by_index",
+    "delete_rows",
+    "insert_rows",
+    "find_replace",
+}
 _EXCEL_WRITE_STATUSES = {"ok", "updated", "appended"}
 
 
@@ -74,11 +78,12 @@ def _unwrap_mcp_payload(result: dict | None) -> dict:
 
     tool_executor stores MCP results as-is: {"content": "<json text>",
     "images": [...]}. The useful fields the tool returned (e.g. "status",
-    "file_id") are inside that JSON-encoded string under "content", not at
-    the top level of the dict. Reading `result.get("file_id")` directly
-    always returns None and silently drops every successful edit - this was
-    why modified_files came back empty even when fill_cell_by_index/fill_cells
-    succeeded (confirmed ok=True in tool_executor logs).
+    "file_id", "url") are inside that JSON-encoded string under "content",
+    not at the top level of the dict. Reading `result.get("file_id")`
+    directly always returns None and silently drops every successful edit -
+    this was why modified_files came back empty even when
+    fill_cell_by_index/fill_cells succeeded (confirmed ok=True in
+    tool_executor logs).
     """
     if not isinstance(result, dict):
         return {}
@@ -99,11 +104,19 @@ def _extract_modified_files(
     """Determine which uploaded files were actually modified this turn.
 
     Inspects the graph's tool_results (ground truth from real tool calls,
-    never trusting the model's own claims in free text) for successful
-    fill_cells/fill_cell_by_index calls and returns the corresponding
-    {file_id, filename} entries, deduplicated by file_id. Does NOT attach a
-    download url yet - the caller awaits _publish_for_download() per entry,
-    since that involves file I/O and this function stays sync.
+    never trusting the model's own claims in free text) for successful Excel
+    write-tool calls and returns the corresponding {file_id, filename, url}
+    entries, deduplicated by file_id.
+
+    The download url is read directly from the MCP tool's own JSON result -
+    dialogue-agent-mcp's write tools already copy the edited file into the
+    shared export volume and build this url themselves (see
+    dialogue-agent-mcp's excel.py:_publish_for_download), so there is no
+    second publish step here: this agent used to look storage_path back up
+    in Postgres and copy the file a second time into /shared-exports just to
+    build its own url, which was a redundant duplicate of work the MCP tool
+    already did. url may be None if PUBLIC_FILES_BASE_URL isn't configured
+    on the MCP side - callers must treat it as optional.
     """
     filename_by_id = {f["file_id"]: f["filename"] for f in (uploaded_files or [])}
     modified: dict[str, dict] = {}
@@ -120,71 +133,10 @@ def _extract_modified_files(
         modified[file_id] = {
             "file_id": file_id,
             "filename": filename_by_id.get(file_id, f"{file_id}.xlsx"),
+            "url": payload.get("url"),
         }
 
     return list(modified.values())
-
-
-async def _publish_for_download(
-    storage_path: str,
-    filename: str,
-    export_dir: str,
-    public_base_url: str,
-) -> str | None:
-    """Copy an edited file into the shared export volume so file-export-server
-    (already proxied publicly at PUBLIC_FILES_BASE_URL/files/) can serve it,
-    and return the resulting public URL.
-
-    Reuses file-converter-mcp's existing public static-file server via a
-    shared Docker volume (settings.SHARED_EXPORT_DIR), instead of exposing a
-    second, unauthenticated download route on the agent itself. Uses the same
-    "export_{token}_{timestamp}/{filename}" folder-naming convention as
-    file-converter's own export links, so both are visually consistent.
-
-    Returns None (never raises) if the copy fails - a missing url just means
-    the bot falls back to attaching the file directly via BotX instead.
-    """
-    try:
-        token = uuid.uuid4().hex[:10]
-        timestamp = time.strftime("%Y%m%d_%H%M%S")
-        folder_name = f"export_{token}_{timestamp}"
-        dest_dir = Path(export_dir) / folder_name
-        await asyncio.to_thread(dest_dir.mkdir, parents=True, exist_ok=True)
-        dest_path = dest_dir / filename
-
-        await asyncio.to_thread(shutil.copyfile, storage_path, dest_path)
-
-        return f"{public_base_url.rstrip('/')}/files/{folder_name}/{quote(filename)}"
-    except OSError as exc:
-        logger.warning("Failed to publish %s for download: %s", filename, exc)
-        return None
-
-
-async def _attach_download_urls(modified_files: list[dict], settings: Settings) -> list[dict]:
-    """Populate the "url" field of each modified_files entry in-place.
-
-    Looks up each file's current storage_path from the database (the same
-    path the Excel MCP tools edit in place) and publishes a copy to the
-    shared export volume.
-    """
-    if not modified_files:
-        return modified_files
-
-    async with get_session_maker()() as session:
-        ids = [uuid.UUID(mf["file_id"]) for mf in modified_files]
-        stmt = select(FileModel.id, FileModel.storage_path).where(FileModel.id.in_(ids))
-        result = await session.execute(stmt)
-        path_by_id = {str(row.id): row.storage_path for row in result.fetchall()}
-
-    for mf in modified_files:
-        storage_path = path_by_id.get(mf["file_id"])
-        if not storage_path or not Path(storage_path).exists():
-            continue
-        mf["url"] = await _publish_for_download(
-            storage_path, mf["filename"], settings.SHARED_EXPORT_DIR, settings.PUBLIC_FILES_BASE_URL
-        )
-
-    return modified_files
 
 
 def get_settings_dep(request: Request) -> Settings:
@@ -416,7 +368,6 @@ async def chat(
     images = result.get("images") or []
     sources = result.get("sources") or []
     modified_files = _extract_modified_files(result.get("tool_results"), enriched_files)
-    modified_files = await _attach_download_urls(modified_files, settings)
 
     asyncio.create_task(
         _save_and_embed(
@@ -488,7 +439,6 @@ async def stream(
             images = result.get("images") or []
             sources = result.get("sources") or []
             modified_files = _extract_modified_files(result.get("tool_results"), enriched_files)
-            modified_files = await _attach_download_urls(modified_files, settings)
 
             asyncio.create_task(
                 _save_and_embed(
