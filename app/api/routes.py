@@ -618,3 +618,26 @@ async def download_file(
         raise HTTPException(404, "File not found on disk")
 
     return FileResponse(path, filename=original_name, media_type=mime_type)
+
+
+@router.delete("/history/{user_id}")
+async def delete_history(
+    user_id: str,
+    request: Request,
+    api_key: str = Depends(get_api_key),
+) -> JSONResponse:
+    """Delete all saved conversation history for a user.
+
+    Backs a bot bridge's /reset command: wipes every Message row for this
+    user_id, including embeddings, via HistoryService.delete_history. Scoped
+    to conversation history only - does not touch uploaded files or their
+    Qdrant document chunks.
+
+    :param user_id: The identifier of the user whose history to delete.
+    :param request: The FastAPI Request object providing access to app state.
+    :param api_key: Validated API key from the X-API-Key header (auto-checked via dependency).
+    :returns: A JSONResponse with user_id and the number of messages deleted.
+    """
+    runtime = get_runtime(request)
+    deleted = await runtime.history_service.delete_history(user_id)
+    return JSONResponse({"user_id": user_id, "deleted": deleted})
