@@ -1,5 +1,31 @@
 """Tests configuration and shared fixtures."""
-from unittest.mock import AsyncMock, MagicMock
+import sys
+from unittest.mock import MagicMock, Mock
+
+# Patch missing C-extension / DB dependencies so orchestrator tests can import.
+def _make_fake_module(name: str):
+    m = MagicMock(name=name)
+    # Make subpackage imports work (e.g. sqlalchemy.dialects.postgresql)
+    type(m).__getitem__ = lambda self, key: m
+    return m
+
+fake_pgvector = _make_fake_module("pgvector")
+fake_sqlalchemy = _make_fake_module("sqlalchemy")
+fake_dialects = _make_fake_module("sqlalchemy.dialects")
+fake_postgresql = _make_fake_module("sqlalchemy.dialects.postgresql")
+fake_orm = _make_fake_module("sqlalchemy.orm")
+
+sys.modules["pgvector"] = fake_pgvector
+sys.modules["pgvector.sqlalchemy"] = fake_pgvector.sqlalchemy = fake_pgvector
+sys.modules["sqlalchemy"] = fake_sqlalchemy
+sys.modules["sqlalchemy.orm"] = fake_orm
+sys.modules["sqlalchemy.ext"] = _make_fake_module("sqlalchemy.ext")
+sys.modules["sqlalchemy.ext.declarative"] = fake_sqlalchemy.ext.declarative = fake_sqlalchemy.ext
+sys.modules["sqlalchemy.dialects"] = fake_dialects
+sys.modules["sqlalchemy.dialects.postgresql"] = fake_postgresql
+
+
+from unittest.mock import AsyncMock, MagicMock  # noqa: E402, F401
 
 import pytest
 
