@@ -12,7 +12,6 @@ services:
       - postgres
     volumes:
       - file_storage:/app/storage
-      - export_data:/shared-exports
       - /home/projects/enclave/dialogue-agent/Qwen/Qwen3-Embedding-0.6B-ONNX:/app/models/Qwen3-Embedding-0.6B-ONNX:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -70,18 +69,6 @@ volumes:
   postgres_data:
   file_storage:
   prometheus_data:
-  # Shared with the file-converter-mcp stack's file-export-server, which is
-  # already proxied publicly (see PUBLIC_FILES_BASE_URL in .env). Writing
-  # edited spreadsheets here (see app/api/routes.py:_publish_for_download)
-  # reuses that existing public file server instead of exposing a new
-  # unauthenticated route on the agent itself.
-  #
-  # Real Docker volume name comes from .env (EXPORT_VOLUME_NAME) - find it
-  # via `docker volume ls | grep export` on the host, it varies per
-  # environment/project layout so it must not be hardcoded here.
-  export_data:
-    external: true
-    name: ${EXPORT_VOLUME_NAME}
 
 networks:
   ai_network:
